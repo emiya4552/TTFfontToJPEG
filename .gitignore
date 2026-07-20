@@ -1,0 +1,29 @@
+# Build directories
+build/
+cmake-build-*/
+
+# C/C++ build products
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.out
+
+# Generated images and debugging output
+*.bmp
+*.jpg
+*.jpeg
+test_*.txt
+encode
+encode2
+emit_time
+eee
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
