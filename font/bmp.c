@@ -1,6 +1,6 @@
 #include"bmp.h"
 
-// generate bmp
+// 功能：将 RGB 像素缓冲区写入 24 位 BMP 文件
 int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 {
 	FILE*		fp;
@@ -27,17 +27,17 @@ int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 
 	header_length	= 64;
 
-	// calculate supplement
+	// 计算每行像素数据的四字节对齐补位
 	supplement	= 0;
 	while((width * PER_PIXEL_BYTE + supplement) % 4 != 0){
 		supplement++;
 	}
 
-	// calculate image size
+	// 计算完整像素区大小并申请输出缓冲区
 	image_size	= width * fabs(height) * PER_PIXEL_BYTE + supplement * fabs(height);
 	bmp_data	= (unsigned char*)calloc(1,image_size);
 
-	// initialize header
+	// 初始化 BMP 文件头和信息头
 	BMP_FILE_HEADER file_header;
 	BMP_INFO_HEADER info_header;
 
@@ -60,11 +60,11 @@ int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 	info_header.biClrUsed		= 0;
 	info_header.biClrImportant	= 0;
 
-	// write header
+	// 写入 BMP 文件头和信息头
 	fwrite(&file_header, sizeof(BMP_FILE_HEADER), 1, fp);
 	fwrite(&info_header, sizeof(BMP_INFO_HEADER), 1, fp);
 
-	// color data
+	// 根据 BMP 高度方向转换行顺序和颜色通道
 	if(height < 0){
 		for(i=0, j=0, pixel_count=0, bit_count=PER_PIXEL_BYTE-1; i<image_size && pixel_count<image_size;){
 			bmp_data[i] = color_data[pixel_count + bit_count];
@@ -101,5 +101,4 @@ int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 
 	return 0;
 }
-
 

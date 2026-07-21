@@ -35,6 +35,7 @@ typedef struct{
 }BMP_INFO_HEADER;
 
 
+// 功能：将 RGB 像素缓冲区写入 24 位 BMP 文件
 int bmp_generate(char* file, unsigned char* color_data, int width, int height);
 
 #endif
