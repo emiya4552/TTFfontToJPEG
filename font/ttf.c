@@ -56,6 +56,7 @@ typedef struct{
 // TTF 表数据
 typedef struct{
 	char 	name[4];
+	u32	offset;
 	u32	length;
 	u8*	data;
 }table;
@@ -152,6 +153,16 @@ typedef struct{
 	}data;
 }cmap_data;
 
+struct ttf_font{
+	FILE*		file;
+	table*		table_array;
+	cmap_data	cmap;
+	u32*		loca_array;
+	int		loca_length;
+	u16		number_of_h_metrics;
+	font_box	box;
+};
+
 // 功能：解析 hhea 表中排版所需的头部字段
 static void read_hhea_header(u8* data, hhea_header* header)
 {
@@ -186,111 +197,127 @@ static u16 get_advance_width(u8* hmtx_data, u16 number_of_h_metrics, int glyph_i
 
 
 
-// 功能：从 TTF 文件读取渲染所需的关键表
-static void read_ttf_data(char* file, table** pp_table)
+// 功能：释放关键 TTF 表数组及其中的数据
+static void free_ttf_tables(table* table_array)
+{
+	int	i;
+
+	if(table_array == NULL){
+		return;
+	}
+
+	for(i=0; i<6; i++){
+		free(table_array[i].data);
+	}
+	free(table_array);
+}
+
+
+// 功能：从 TTF 文件读取渲染所需的六个关键表
+static int read_ttf_data(const char* file, FILE** pp_file, table** pp_table)
 {
 	FILE*		fp;
 	file_header	ttf_header;
-	table_entry*	p_table_entry_array;	// 使用后需要释放
+	table_entry*	table_entry_array;
+	const char*	key_table_name[6];
+	table*		table_array;
+	int		current_entry;
 	int		i;
 	int		j;
-	int 		k;
-	int		current_table;
-	const char*	key_table_name[6];
 
-	// 打开字体文件
-	fp = fopen(file,"rb");
+	if(file == NULL || pp_file == NULL || pp_table == NULL){
+		return -1;
+	}
+	*pp_file = NULL;
+	*pp_table = NULL;
+
+	// 打开字体文件并读取表目录头
+	fp = fopen(file, "rb");
 	if(fp == NULL){
 		printf("open file error\n");
+		return -1;
+	}
+	if(fread(&ttf_header, sizeof(file_header), 1, fp) != 1){
+		fclose(fp);
+		return -1;
 	}
 
-	// 初始化遍历状态
-	i =	0;
-	j =	0;
-	k = 0;
-
-	// 设置需要读取的关键表名称
-	key_table_name[0]	= "head";
-	key_table_name[1]	= "cmap";
-	key_table_name[2]	= "loca";
-	key_table_name[3]	= "glyf";
-	key_table_name[4]	= "hhea";
-	key_table_name[5]	= "hmtx";
-
-	// 为关键表数组申请空间
-	*pp_table	= (table*)malloc(sizeof(table)*6);
-
-	// 读取并转换 TTF 文件头
-	fread(&ttf_header, sizeof(file_header), 1, fp);
-
-	convert(ttf_header.version, 		sizeof(ttf_header.version)		*BIT_PER_BYTE); 	
-	convert(ttf_header.table_number, 	sizeof(ttf_header.table_number)		*BIT_PER_BYTE);
-	convert(ttf_header.search_range, 	sizeof(ttf_header.search_range)		*BIT_PER_BYTE);
-	convert(ttf_header.entry_selector,	sizeof(ttf_header.entry_selector)	*BIT_PER_BYTE);
-	convert(ttf_header.range_shift,		sizeof(ttf_header.range_shift)		*BIT_PER_BYTE);
+	convert(ttf_header.version, 		sizeof(ttf_header.version)*BIT_PER_BYTE);
+	convert(ttf_header.table_number, 	sizeof(ttf_header.table_number)*BIT_PER_BYTE);
+	convert(ttf_header.search_range, 	sizeof(ttf_header.search_range)*BIT_PER_BYTE);
+	convert(ttf_header.entry_selector,	sizeof(ttf_header.entry_selector)*BIT_PER_BYTE);
+	convert(ttf_header.range_shift,		sizeof(ttf_header.range_shift)*BIT_PER_BYTE);
+	if(ttf_header.table_number == 0){
+		fclose(fp);
+		return -1;
+	}
 
 	// 读取并转换全部表目录项
-	p_table_entry_array	= (table_entry*)malloc(sizeof(table_entry)*ttf_header.table_number);
-	fread(p_table_entry_array, sizeof(table_entry), ttf_header.table_number, fp);
-	for(i=0;i<ttf_header.table_number;i++){
-		convert(((p_table_entry_array)[i]).check_sum,	sizeof((p_table_entry_array[i]).check_sum)	*BIT_PER_BYTE);
-		convert(((p_table_entry_array)[i]).offset,	sizeof((p_table_entry_array[i]).offset)		*BIT_PER_BYTE);
-		convert(((p_table_entry_array)[i]).length,	sizeof((p_table_entry_array[i]).length)		*BIT_PER_BYTE);
+	table_entry_array = (table_entry*)malloc(sizeof(table_entry)*ttf_header.table_number);
+	if(table_entry_array == NULL ||
+	   fread(table_entry_array, sizeof(table_entry), ttf_header.table_number, fp) != ttf_header.table_number){
+		free(table_entry_array);
+		fclose(fp);
+		return -1;
+	}
+	for(i=0; i<ttf_header.table_number; i++){
+		convert(table_entry_array[i].check_sum, sizeof(table_entry_array[i].check_sum)*BIT_PER_BYTE);
+		convert(table_entry_array[i].offset, sizeof(table_entry_array[i].offset)*BIT_PER_BYTE);
+		convert(table_entry_array[i].length, sizeof(table_entry_array[i].length)*BIT_PER_BYTE);
 	}
 
-	// 输出表目录调试信息
-	for(i=0;i<ttf_header.table_number;i++){
-		printf("%c %c %c %c\n", p_table_entry_array[i].tag[0],
-					p_table_entry_array[i].tag[1],
-					p_table_entry_array[i].tag[2],
-					p_table_entry_array[i].tag[3]);
-		printf("%0x\n",((p_table_entry_array)[i]).check_sum);
-		printf("%0x\n",((p_table_entry_array)[i]).offset);
-		printf("%0x\n",((p_table_entry_array)[i]).length);	
+	key_table_name[0] = "head";
+	key_table_name[1] = "cmap";
+	key_table_name[2] = "loca";
+	key_table_name[3] = "glyf";
+	key_table_name[4] = "hhea";
+	key_table_name[5] = "hmtx";
+	table_array = (table*)calloc(6, sizeof(table));
+	if(table_array == NULL){
+		free(table_entry_array);
+		fclose(fp);
+		return -1;
 	}
 
-	// 按表目录顺序查找并读取六个关键表
+	// 每个关键表独立查找，避免依赖字体表目录的排列顺序
 	for(i=0; i<6; i++){
-		// 定位下一个需要加载的表
-		// 每次比较会比较所有关键表名，所以此处不需要j=0初始化
-		current_table = 0;
-		for(; j<ttf_header.table_number; j++){
-			if(!memcmp(key_table_name[0], (p_table_entry_array[j]).tag, 4)){
-				current_table = 0;
-				break;
-			}else if(!memcmp(key_table_name[1], (p_table_entry_array[j]).tag, 4)){
-				current_table = 1;
-				break;
-			}else if(!memcmp(key_table_name[2], (p_table_entry_array[j]).tag, 4)){
-				current_table = 2;
-				break;
-			}else if(!memcmp(key_table_name[3], (p_table_entry_array[j]).tag, 4)){
-				current_table = 3;
-				break;
-			}else if(!memcmp(key_table_name[4], (p_table_entry_array[j]).tag, 4)){
-				current_table = 4;
-				break;
-			}else if(!memcmp(key_table_name[5], (p_table_entry_array[j]).tag, 4)){
-				current_table = 5;
+		current_entry = -1;
+		for(j=0; j<ttf_header.table_number; j++){
+			if(memcmp(key_table_name[i], table_entry_array[j].tag, 4) == 0){
+				current_entry = j;
 				break;
 			}
 		}
-		// 保存表名称和长度
-		for(k=0; k<4; k++){
-			(*pp_table)[current_table].name[k] = p_table_entry_array[j].tag[k];
+		if(current_entry < 0 || table_entry_array[current_entry].length == 0){
+			free(table_entry_array);
+			fclose(fp);
+			free_ttf_tables(table_array);
+			return -1;
 		}
-		(*pp_table)[current_table].length = p_table_entry_array[j].length;
-		// 定位表数据并复制到独立缓冲区
-		fseek(fp, p_table_entry_array[j].offset, SEEK_SET);
-		(*pp_table)[current_table].data = (u8*)malloc(p_table_entry_array[j].length);
-		fread((*pp_table)[current_table].data, sizeof(u8), p_table_entry_array[j].length, fp);
-		j++;
+
+		memcpy(table_array[i].name, table_entry_array[current_entry].tag, 4);
+		table_array[i].offset = table_entry_array[current_entry].offset;
+		table_array[i].length = table_entry_array[current_entry].length;
+
+		// glyf 表体积最大，只保存文件位置并在请求字形时按需读取
+		if(i == 3){
+			continue;
+		}
+		table_array[i].data = (u8*)malloc(table_array[i].length);
+		if(table_array[i].data == NULL ||
+		   fseek(fp, table_entry_array[current_entry].offset, SEEK_SET) != 0 ||
+		   fread(table_array[i].data, sizeof(u8), table_array[i].length, fp) != table_array[i].length){
+			free(table_entry_array);
+			fclose(fp);
+			free_ttf_tables(table_array);
+			return -1;
+		}
 	}
 
-	// 释放临时表目录并关闭文件
-	free(p_table_entry_array);
-
-	fclose(fp);
+	free(table_entry_array);
+	*pp_file = fp;
+	*pp_table = table_array;
+	return 0;
 }
 
 
@@ -353,6 +380,9 @@ static u16 get_cmap_subtable_data(u8* cmap_table_data, u16 target_format, u8** p
 	// 为子表头申请空间并移动到首个目录项
 	pointer += sizeof(u16); // 跳过子表数量
 	header	= (cmap_subtable_header*)malloc(sizeof(cmap_subtable_header)*number_of_subtable);
+	if(number_of_subtable > 0 && header == NULL){
+		return 0;
+	}
 
 	// 读取并转换全部 cmap 子表目录项
 	for(i=0; i<number_of_subtable; i++){
@@ -462,8 +492,6 @@ static u16 read_cmap_format4_subtable(u8* cmap_subtable_data, cmap_format4_data*
 	// 计算尾部字形索引数组长度
 	glyph_index_array_length	= header.length-sizeof(cmap_format4_header)-sizeof(u16)-segment_count*sizeof(u16)*4;
 	glyph_index_array_length /=2;
-	printf("glyph_index_array_length = %d\n", glyph_index_array_length);
-
 	// 为各分段数组申请空间
 	p_data->end_code	= (u16*)malloc(sizeof(u16)*segment_count);
 	p_data->start_code	= (u16*)malloc(sizeof(u16)*segment_count);
@@ -473,6 +501,17 @@ static u16 read_cmap_format4_subtable(u8* cmap_subtable_data, cmap_format4_data*
 		p_data->glyph_index_array	= (u16*)malloc(sizeof(u16)*glyph_index_array_length);
 	}else{
 		p_data->glyph_index_array	= NULL;
+	}
+	if(p_data->end_code == NULL || p_data->start_code == NULL ||
+	   p_data->id_delta == NULL || p_data->id_range_offset == NULL ||
+	   (glyph_index_array_length > 0 && p_data->glyph_index_array == NULL)){
+		free(p_data->end_code);
+		free(p_data->start_code);
+		free(p_data->id_delta);
+		free(p_data->id_range_offset);
+		free(p_data->glyph_index_array);
+		memset(p_data, 0, sizeof(cmap_format4_data));
+		return 0;
 	}
 	p_data->glyph_index_array_length = glyph_index_array_length;
 	// 按 Format 4 布局依次读取各分段数组
@@ -563,7 +602,7 @@ static int get_glyph_index_format4(cmap_format4_data format4, u32 unicode, u16 s
 
 
 // 功能：解析 cmap Format 12 子表
-static void read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_data* p_data)
+static int read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_data* p_data)
 {
 	u8*	pointer;
 	u32	i;
@@ -591,7 +630,13 @@ static void read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_da
 
 
 	// 为连续映射分组申请空间
+	if(p_data->groups_number == 0){
+		return -1;
+	}
 	p_data->groups = (sequential_map_group*)malloc(sizeof(sequential_map_group)*(p_data->groups_number));
+	if(p_data->groups == NULL){
+		return -1;
+	}
 	
 	// 读取并转换全部连续映射分组
 	memcpy(p_data->groups, pointer, sizeof(sequential_map_group)*(p_data->groups_number));
@@ -600,6 +645,8 @@ static void read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_da
 		convert((p_data->groups)[i].end_char_code, 	sizeof(u32)*BIT_PER_BYTE);
 		convert((p_data->groups)[i].start_glyph_id, 	sizeof(u32)*BIT_PER_BYTE);
 	}
+
+	return 0;
 }
 
 // 功能：通过 cmap Format 12 获取字形索引
@@ -649,7 +696,10 @@ static u16 read_cmap(u8* cmap_table_data, cmap_data* p_cmap)
 	// Format 12 能覆盖完整 Unicode，存在时不再解析 Format 4
 	format = get_cmap_subtable_data(cmap_table_data, 12, &cmap_subtable_data);
 	if(format == 12){
-		read_cmap_format12_subtable(cmap_subtable_data, &(p_cmap->data.format12));
+		if(read_cmap_format12_subtable(cmap_subtable_data, &(p_cmap->data.format12)) != 0){
+			free(cmap_subtable_data);
+			return 0;
+		}
 		free(cmap_subtable_data);
 		p_cmap->format = 12;
 		return 12;
@@ -660,6 +710,9 @@ static u16 read_cmap(u8* cmap_table_data, cmap_data* p_cmap)
 	if(format == 4){
 		p_cmap->segment_count = read_cmap_format4_subtable(cmap_subtable_data, &(p_cmap->data.format4));
 		free(cmap_subtable_data);
+		if(p_cmap->segment_count == 0){
+			return 0;
+		}
 		p_cmap->format = 4;
 		return 4;
 	}
@@ -722,6 +775,9 @@ static int read_loca_table(u8* data, u16 index_to_loca_format, u32** pp_result, 
 
 	// 为字形偏移数组申请空间
 	*pp_result	= (u32*)malloc(sizeof(u32)*loca_length);
+	if(*pp_result == NULL){
+		return 0;
+	}
 	// 按短格式或长格式读取并转换全部偏移
 	if(index_to_loca_format == 0){
 		for(i=0; i<loca_length; i++){
@@ -740,25 +796,32 @@ static int read_loca_table(u8* data, u16 index_to_loca_format, u32** pp_result, 
 	return loca_length;
 }
 
-// 功能：从 glyf 表复制指定字形的原始数据
-static void get_glyph_data(u8* glyf_data, u32 glyph_data_offset, u8** pp_glyph_data, int glyph_length)
+// 功能：从字体文件的 glyf 表按偏移读取一个独立字形
+static int read_glyph_data(FILE* file, table* glyf_table, u32 glyph_data_offset, u8** pp_glyph_data, int glyph_length)
 {
-	u8*	pointer;
-	
 	*pp_glyph_data = NULL;
 	if(glyph_length <= 0){
-		return;
+		return 0;
+	}
+	if(file == NULL || glyf_table == NULL ||
+	   glyph_data_offset > glyf_table->length ||
+	   (u32)glyph_length > glyf_table->length-glyph_data_offset){
+		return -1;
 	}
 
-	// 为单个字形数据申请独立缓冲区
-	pointer		= glyf_data + glyph_data_offset;
-	*pp_glyph_data	= (u8*)malloc(sizeof(u8)*glyph_length);
+	// 只为当前字形申请空间，并定位到 glyf 表内的对应片段
+	*pp_glyph_data = (u8*)malloc(sizeof(u8)*glyph_length);
 	if(*pp_glyph_data == NULL){
-		return;
+		return -1;
 	}
-	
-	// 从 glyf 表指定偏移复制字形数据
-	memcpy(*pp_glyph_data, pointer, glyph_length*sizeof(u8));
+	if(fseek(file, glyf_table->offset+glyph_data_offset, SEEK_SET) != 0 ||
+	   fread(*pp_glyph_data, sizeof(u8), glyph_length, file) != (size_t)glyph_length){
+		free(*pp_glyph_data);
+		*pp_glyph_data = NULL;
+		return -1;
+	}
+
+	return 0;
 }
 			
 // 功能：补充连续控制点之间的隐式点并生成可绘制点数组
@@ -1023,7 +1086,7 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 
 
 // 功能：从已经解析的字体表中加载一个 Unicode 对应的字形数据
-static int load_glyph_entry(cmap_data* cmap, u32* loca_array, int loca_length, u8* glyf_data, u8* hmtx_data, u16 number_of_h_metrics, u32 unicode, glyph_point_data* glyph)
+static int load_glyph_entry(FILE* file, table* glyf_table, cmap_data* cmap, u32* loca_array, int loca_length, u8* hmtx_data, u16 number_of_h_metrics, u32 unicode, glyph_point_data* glyph)
 {
 	int	glyph_index;
 	u32	glyph_offset;
@@ -1040,8 +1103,7 @@ static int load_glyph_entry(cmap_data* cmap, u32* loca_array, int loca_length, u
 	glyph->unicode = unicode;
 	glyph->glyph_length = glyph_length;
 	glyph->advance_width = get_advance_width(hmtx_data, number_of_h_metrics, glyph_index);
-	get_glyph_data(glyf_data, glyph_offset, &(glyph->glyph_data), glyph_length);
-	if(glyph_length > 0 && glyph->glyph_data == NULL){
+	if(read_glyph_data(file, glyf_table, glyph_offset, &(glyph->glyph_data), glyph_length) != 0){
 		return -1;
 	}
 
@@ -1049,147 +1111,110 @@ static int load_glyph_entry(cmap_data* cmap, u32* loca_array, int loca_length, u
 }
 
 
-// 功能：按照多个 Unicode 范围加载字形数据和统一排版框
-int load_ttf_ranges(char* file, const unicode_range* range_array, int range_count, ttf_font_data* font)
+// 功能：打开字体文件并建立可复用的 TTF 解析上下文
+int ttf_font_open(const char* file, ttf_font** pp_font)
 {
-	table*		ttf_table;
+	ttf_font*	font;
 	head_table	head;
 	hhea_header	hhea;
-	cmap_data	cmap;
-	u32*		loca_array;
-	u64		total_count;
-	u32		unicode;
 	u16		cmap_format;
-	int		loca_length;
-	int		glyph_position;
-	int		i;
-	int		j;
 
-	if(file == NULL || range_array == NULL || range_count <= 0 || font == NULL){
+	if(file == NULL || pp_font == NULL){
+		return -1;
+	}
+	*pp_font = NULL;
+	font = (ttf_font*)calloc(1, sizeof(ttf_font));
+	if(font == NULL){
 		return -1;
 	}
 
-	font->glyph_array = NULL;
-	font->glyph_count = 0;
-	memset(&(font->box), 0, sizeof(font_box));
-	total_count = 0;
-
-	// 统计所有范围的字符总数，并拒绝逆序或过大的范围
-	for(i=0; i<range_count; i++){
-		if(range_array[i].begin > range_array[i].end){
-			return -1;
-		}
-		total_count += (u64)range_array[i].end-range_array[i].begin+1;
-		if(total_count > 0x7fffffff){
-			return -1;
-		}
+	// 一次读取并解析后续单字形加载共享的关键表
+	if(read_ttf_data(file, &(font->file), &(font->table_array)) != 0){
+		free(font);
+		return -1;
+	}
+	read_head_table(font->table_array[0].data, &head);
+	read_hhea_header(font->table_array[4].data, &hhea);
+	cmap_format = read_cmap(font->table_array[1].data, &(font->cmap));
+	font->loca_length = read_loca_table(font->table_array[2].data,
+		head.index_to_loca_format, &(font->loca_array), font->table_array[2].length);
+	if((cmap_format != 12 && cmap_format != 4) ||
+	   font->loca_length <= 1 || font->loca_array == NULL){
+		ttf_font_close(font);
+		return -1;
 	}
 
-	read_ttf_data(file, &ttf_table);
-	read_head_table(ttf_table[0].data, &head);
-	read_hhea_header(ttf_table[4].data, &hhea);
+	font->number_of_h_metrics = hhea.number_of_h_metrics;
 	font->box.x_min = 0;
 	font->box.y_min = hhea.descent;
 	font->box.x_max = head.unit_per_Em;
 	font->box.y_max = hhea.ascent;
 
-	// 字符映射和字形偏移只解析一次，全部范围共享解析结果
-	cmap_format = read_cmap(ttf_table[1].data, &cmap);
-	loca_length = read_loca_table(ttf_table[2].data, head.index_to_loca_format, &loca_array, ttf_table[2].length);
-	if((cmap_format != 12 && cmap_format != 4) || loca_array == NULL){
-		free_cmap(&cmap);
-		for(i=0; i<6; i++){
-			free(ttf_table[i].data);
-		}
-		free(ttf_table);
-		return -1;
-	}
-
-	font->glyph_array = (glyph_point_data*)calloc((size_t)total_count, sizeof(glyph_point_data));
-	if(font->glyph_array == NULL){
-		free(loca_array);
-		free_cmap(&cmap);
-		for(i=0; i<6; i++){
-			free(ttf_table[i].data);
-		}
-		free(ttf_table);
-		return -1;
-	}
-	font->glyph_count = (int)total_count;
-
-	// 按范围顺序加载每个 Unicode，空轮廓仍保留 advanceWidth
-	glyph_position = 0;
-	for(i=0; i<range_count; i++){
-		for(unicode=range_array[i].begin; ; unicode++){
-			if(load_glyph_entry(&cmap, loca_array, loca_length, ttf_table[3].data,
-				ttf_table[5].data, hhea.number_of_h_metrics, unicode,
-				&(font->glyph_array[glyph_position])) != 0){
-				for(j=0; j<glyph_position; j++){
-					free(font->glyph_array[j].glyph_data);
-				}
-				free(font->glyph_array);
-				font->glyph_array = NULL;
-				font->glyph_count = 0;
-				free(loca_array);
-				free_cmap(&cmap);
-				for(j=0; j<6; j++){
-					free(ttf_table[j].data);
-				}
-				free(ttf_table);
-				return -1;
-			}
-			glyph_position++;
-			if(unicode == range_array[i].end){
-				break;
-			}
-		}
-	}
-
-	free(loca_array);
-	free_cmap(&cmap);
-	for(i=0; i<6; i++){
-		free(ttf_table[i].data);
-	}
-	free(ttf_table);
+	// 解析完成后释放不再使用的原始表，仅保留 hmtx 和 glyf 文件位置
+	free(font->table_array[0].data);
+	free(font->table_array[1].data);
+	free(font->table_array[2].data);
+	free(font->table_array[4].data);
+	font->table_array[0].data = NULL;
+	font->table_array[1].data = NULL;
+	font->table_array[2].data = NULL;
+	font->table_array[4].data = NULL;
+	*pp_font = font;
 
 	return 0;
 }
 
 
-// 功能：释放范围加载得到的全部字形数据
-void free_ttf_font_data(ttf_font_data* font)
+// 功能：关闭 TTF 解析上下文并释放其持有的数据
+void ttf_font_close(ttf_font* font)
 {
-	int	i;
-
 	if(font == NULL){
 		return;
 	}
 
-	for(i=0; i<font->glyph_count; i++){
-		free(font->glyph_array[i].glyph_data);
+	free(font->loca_array);
+	free_cmap(&(font->cmap));
+	free_ttf_tables(font->table_array);
+	if(font->file != NULL){
+		fclose(font->file);
 	}
-	free(font->glyph_array);
-	font->glyph_array = NULL;
-	font->glyph_count = 0;
-	memset(&(font->box), 0, sizeof(font_box));
+	free(font);
 }
 
 
-// 功能：加载字体中的中文 BMP 字形数据及统一排版框
-void load_ttf_BMP(char* file, glyph_point_data** glyph_array, font_box* box)
+// 功能：读取字体的统一排版框
+int ttf_font_get_box(ttf_font* font, font_box* box)
 {
-	unicode_range	range;
-	ttf_font_data	font;
+	if(font == NULL || box == NULL){
+		return -1;
+	}
 
-	range.begin = UNICODE_BMP_CHINA_BEGIN;
-	range.end = UNICODE_BMP_CHINA_END;
-	*glyph_array = NULL;
-	memset(box, 0, sizeof(font_box));
+	*box = font->box;
+	return 0;
+}
 
-	if(load_ttf_ranges(file, &range, 1, &font) != 0){
+
+// 功能：按 Unicode 从已经打开的字体中加载一个独立字形
+int ttf_font_load_glyph(ttf_font* font, u32 unicode, glyph_point_data* glyph)
+{
+	if(font == NULL || glyph == NULL){
+		return -1;
+	}
+	memset(glyph, 0, sizeof(glyph_point_data));
+
+	return load_glyph_entry(font->file, &(font->table_array[3]), &(font->cmap),
+		font->loca_array, font->loca_length, font->table_array[5].data,
+		font->number_of_h_metrics, unicode, glyph);
+}
+
+
+// 功能：释放单个独立字形持有的原始数据
+void ttf_glyph_free(glyph_point_data* glyph)
+{
+	if(glyph == NULL){
 		return;
 	}
 
-	*glyph_array = font.glyph_array;
-	*box = font.box;
+	free(glyph->glyph_data);
+	memset(glyph, 0, sizeof(glyph_point_data));
 }

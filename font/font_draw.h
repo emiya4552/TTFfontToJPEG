@@ -3,6 +3,7 @@
 
 
 #include"ttf.h"
+#include"ttf_preload.h"
 #include"encoding.h"
 
 
@@ -54,6 +55,12 @@ void draw_font_scaled_string(ttf_font_data* font, const char* string, word_encod
 
 // 功能：使用变长字体集合按目标字框高度绘制实心字符串
 void draw_font_scaled_filled_string(ttf_font_data* font, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height);
+
+// 功能：通过统一字形来源按目标字框高度绘制空心字符串
+void draw_source_scaled_string(font_glyph_source* source, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height);
+
+// 功能：通过统一字形来源按目标字框高度绘制实心字符串
+void draw_source_scaled_filled_string(font_glyph_source* source, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height);
 
 
 #endif

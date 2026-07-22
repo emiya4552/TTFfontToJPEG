@@ -31,6 +31,11 @@ typedef struct{
 	int	direction;
 }glyph_intersection;
 
+typedef struct{
+	glyph_point_data*	glyph_array;
+	int			glyph_count;
+}array_glyph_source;
+
 
 // 功能：根据 Unicode 查找已经加载的字形位置
 static int find_glyph_target(glyph_point_data* glyph_array, int glyph_count, unicode_t unicode)
@@ -44,6 +49,22 @@ static int find_glyph_target(glyph_point_data* glyph_array, int glyph_count, uni
 	}
 
 	return -1;
+}
+
+
+// 功能：通过数组字形来源按 Unicode 返回已经加载的字形
+static glyph_point_data* get_array_glyph(void* context, u32 unicode)
+{
+	array_glyph_source*	source;
+	int			target;
+
+	source = (array_glyph_source*)context;
+	target = find_glyph_target(source->glyph_array, source->glyph_count, unicode);
+	if(target < 0){
+		return NULL;
+	}
+
+	return &(source->glyph_array[target]);
 }
 
 
@@ -549,98 +570,129 @@ static void scale_point_data(point* point_data, int point_length, float scale)
 }
 
 
-// 功能：按目标字框高度解析并绘制单个字符
-static void draw_word_by_height(glyph_point_data* glyph_array, int glyph_count, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
+// 功能：按目标字框高度解析并绘制已经取得的单个字形
+static void draw_glyph_by_height(glyph_point_data* glyph, font_box box, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
 {
-	unicode_t	unicode;
 	point*		point_data;
 	font_box	scaled_box;
 	float		scale;
 	int		point_length;
-	int		target;
 	int		offset_x;
 	int		offset_y;
 	int		i;
 
-	if(word_to_unicode(word, encoding, &unicode) != 0){
-		printf("word error\n");
+	if(glyph == NULL || glyph->glyph_length <= 0){
 		return;
 	}
-
-	// 查找 Unicode 对应的已加载字形
-	target = find_glyph_target(glyph_array, glyph_count, unicode);
-	if(target < 0){
-		printf("not find correct glyph_data\n");
-		return;
-	}
-
 	if(get_scaled_box(box, target_height, &scaled_box, &scale) != 0){
 		return;
 	}
 
 	// 解析并缩放轮廓点，再计算缩放后排版框的原点偏移
-	point_data	= NULL;
-	point_length	= glyph_to_point(glyph_array[target].glyph_data, &point_data, glyph_array[target].glyph_length);
+	point_data = NULL;
+	point_length = glyph_to_point(glyph->glyph_data, &point_data, glyph->glyph_length);
 	if(point_length <= 0 || point_data == NULL){
 		printf("glyph point error\n");
 		free(point_data);
 		return;
 	}
 	scale_point_data(point_data, point_length, scale);
-	offset_x	= center_x-(scaled_box.x_min+scaled_box.x_max)/2;
-	offset_y	= center_y-(scaled_box.y_min+scaled_box.y_max)/2;
+	offset_x = center_x-(scaled_box.x_min+scaled_box.x_max)/2;
+	offset_y = center_y-(scaled_box.y_min+scaled_box.y_max)/2;
 
 	// 根据调用类型绘制空心或实心字形
 	if(filled == 0){
 		for(i=0; i<point_length; i++){
 			printf("i %d   x %f    y %f    locate %d\n", i, point_data[i].x, point_data[i].y, point_data[i].locate);
 		}
-		draw_word_from_point(bmp.width, bmp.height, bmp.color_data, bmp.color, point_data, point_length, offset_x, offset_y);
+		draw_word_from_point(bmp.width, bmp.height, bmp.color_data, bmp.color,
+			point_data, point_length, offset_x, offset_y);
 	}else{
-		draw_filled_word_from_point(bmp.width, bmp.height, bmp.color_data, bmp.color, point_data, point_length, offset_x, offset_y);
+		draw_filled_word_from_point(bmp.width, bmp.height, bmp.color_data, bmp.color,
+			point_data, point_length, offset_x, offset_y);
 	}
 
 	free(point_data);
 }
 
 
+// 功能：通过统一字形来源按目标字框高度绘制单个字符
+static void draw_word_by_height(font_glyph_source* source, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
+{
+	glyph_point_data*	glyph;
+	unicode_t	unicode;
+
+	if(source == NULL || source->get_glyph == NULL){
+		printf("font source error\n");
+		return;
+	}
+	if(word_to_unicode(word, encoding, &unicode) != 0){
+		printf("word error\n");
+		return;
+	}
+
+	glyph = source->get_glyph(source->context, unicode);
+	if(glyph == NULL){
+		printf("not find correct glyph_data\n");
+		return;
+	}
+
+	draw_glyph_by_height(glyph, source->box, bmp, center_x, center_y, target_height, filled);
+}
+
+
+// 功能：将字形数组包装为统一字形来源并绘制单个字符
+static void draw_array_word_by_height(glyph_point_data* glyph_array, int glyph_count, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
+{
+	array_glyph_source	array_source;
+	font_glyph_source	source;
+
+	array_source.glyph_array = glyph_array;
+	array_source.glyph_count = glyph_count;
+	source.context = &array_source;
+	source.box = box;
+	source.get_glyph = get_array_glyph;
+	draw_word_by_height(&source, word, encoding, bmp, center_x, center_y, target_height, filled);
+}
+
+
 // 功能：以指定排版框中心绘制单个空心字符
 void draw_word(glyph_point_data* glyph_array, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y)
 {
-	draw_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_OUTLINE);
+	draw_array_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_OUTLINE);
 }
 
 
 // 功能：以指定排版框中心绘制单个实心字符
 void draw_filled_word(glyph_point_data* glyph_array, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y)
 {
-	draw_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_FILLED);
+	draw_array_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_FILLED);
 }
 
 
 // 功能：按目标字框高度在指定中心绘制单个空心字符
 void draw_scaled_word(glyph_point_data* glyph_array, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
-	draw_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, target_height, DRAW_OUTLINE);
+	draw_array_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, target_height, DRAW_OUTLINE);
 }
 
 
 // 功能：按目标字框高度在指定中心绘制单个实心字符
 void draw_scaled_filled_word(glyph_point_data* glyph_array, font_box box, const char* word, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
-	draw_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, target_height, DRAW_FILLED);
+	draw_array_word_by_height(glyph_array, UNICODE_BMP_NUMBER, box, word, encoding, bmp, center_x, center_y, target_height, DRAW_FILLED);
 }
 
 
 // 功能：计算缩放后能够以指定位置为中心完整绘制的字符串前缀及其宽度
-static int get_centered_string_range(glyph_point_data* glyph_array, int glyph_count, const char* string, word_encoding encoding, int bmp_width, int center_x, float scale, int* draw_length, int* draw_width)
+static int get_centered_string_range(font_glyph_source* source, const char* string, word_encoding encoding, int bmp_width, int center_x, float scale, int* draw_length, int* draw_width)
 {
 	const char*	current;
 	char*		word;
+	glyph_point_data*	glyph;
 	unicode_t	unicode;
 	int		string_length;
 	int		word_length;
-	int		target;
 	int		advance_width;
 	int		available_width;
 
@@ -680,14 +732,14 @@ static int get_centered_string_range(glyph_point_data* glyph_array, int glyph_co
 			break;
 		}
 
-		// 查找当前字符的水平前进宽度
-		target = find_glyph_target(glyph_array, glyph_count, unicode);
-		if(target < 0){
+		// 通过统一来源获取当前字符的水平前进宽度
+		glyph = source->get_glyph(source->context, unicode);
+		if(glyph == NULL){
 			printf("not find correct glyph_data\n");
 			break;
 		}
 
-		advance_width = scale_coordinate(glyph_array[target].advance_width, scale);
+		advance_width = scale_coordinate(glyph->advance_width, scale);
 		if(advance_width <= 0){
 			printf("advance width error\n");
 			break;
@@ -707,10 +759,11 @@ static int get_centered_string_range(glyph_point_data* glyph_array, int glyph_co
 
 
 // 功能：按目标字框高度从左向右绘制字符串，并在完整字框越界时截断
-static void draw_string_by_height(glyph_point_data* glyph_array, int glyph_count, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
+static void draw_string_by_height(font_glyph_source* source, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
 {
 	const char*	current;
 	char*		word;
+	glyph_point_data*	glyph;
 	font_box	word_box;
 	font_box	scaled_box;
 	unicode_t	unicode;
@@ -719,23 +772,26 @@ static void draw_string_by_height(glyph_point_data* glyph_array, int glyph_count
 	int		draw_length;
 	int		draw_width;
 	int		word_length;
-	int		target;
 	int		advance_width;
 	int		pen_x;
 	int		word_center_x;
 	int		offset_y;
 
+	if(source == NULL || source->get_glyph == NULL){
+		printf("font source error\n");
+		return;
+	}
 	if(string == NULL || string[0] == '\0'){
 		printf("string error\n");
 		return;
 	}
-	if(get_scaled_box(box, target_height, &scaled_box, &scale) != 0){
+	if(get_scaled_box(source->box, target_height, &scaled_box, &scale) != 0){
 		return;
 	}
 
 	// 先按缩放后的前进宽度确定可绘制前缀，再将其整体中心对齐到输入坐标
 	string_length	= strlen(string);
-	if(get_centered_string_range(glyph_array, glyph_count, string, encoding, bmp.width, center_x, scale, &draw_length, &draw_width) != 0 ||
+	if(get_centered_string_range(source, string, encoding, bmp.width, center_x, scale, &draw_length, &draw_width) != 0 ||
 	   draw_length == 0){
 		return;
 	}
@@ -767,14 +823,14 @@ static void draw_string_by_height(glyph_point_data* glyph_array, int glyph_count
 			break;
 		}
 
-		// 查找当前字符对应的字形和水平前进宽度
-		target = find_glyph_target(glyph_array, glyph_count, unicode);
-		if(target < 0){
+		// 通过统一来源获取当前字符和水平前进宽度
+		glyph = source->get_glyph(source->context, unicode);
+		if(glyph == NULL){
 			printf("not find correct glyph_data\n");
 			break;
 		}
 
-		advance_width = scale_coordinate(glyph_array[target].advance_width, scale);
+		advance_width = scale_coordinate(glyph->advance_width, scale);
 		if(advance_width <= 0){
 			printf("advance width error\n");
 			break;
@@ -787,13 +843,13 @@ static void draw_string_by_height(glyph_point_data* glyph_array, int glyph_count
 		}
 
 		// 空格等无轮廓字形只移动排版笔，不进入轮廓解析和绘制
-		if(glyph_array[target].glyph_length > 0){
+		if(glyph->glyph_length > 0){
 			word_center_x	= pen_x+advance_width/2;
-			word_box	= box;
+			word_box	= source->box;
 			word_box.x_min	= 0;
-			word_box.x_max	= glyph_array[target].advance_width;
-			draw_word_by_height(glyph_array, glyph_count, word_box, word, encoding, bmp,
-				word_center_x, center_y, target_height, filled);
+			word_box.x_max	= glyph->advance_width;
+			draw_glyph_by_height(glyph, word_box, bmp, word_center_x, center_y,
+				target_height, filled);
 		}
 
 		pen_x	+= advance_width;
@@ -804,31 +860,46 @@ static void draw_string_by_height(glyph_point_data* glyph_array, int glyph_count
 }
 
 
+// 功能：将字形数组包装为统一字形来源并绘制字符串
+static void draw_array_string_by_height(glyph_point_data* glyph_array, int glyph_count, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height, int filled)
+{
+	array_glyph_source	array_source;
+	font_glyph_source	source;
+
+	array_source.glyph_array = glyph_array;
+	array_source.glyph_count = glyph_count;
+	source.context = &array_source;
+	source.box = box;
+	source.get_glyph = get_array_glyph;
+	draw_string_by_height(&source, string, encoding, bmp, center_x, center_y, target_height, filled);
+}
+
+
 // 功能：以指定位置为整体中心从左向右绘制空心字符串
 void draw_string(glyph_point_data* glyph_array, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y)
 {
-	draw_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_OUTLINE);
+	draw_array_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_OUTLINE);
 }
 
 
 // 功能：以指定位置为整体中心从左向右绘制实心字符串
 void draw_filled_string(glyph_point_data* glyph_array, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y)
 {
-	draw_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_FILLED);
+	draw_array_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, ORIGINAL_FONT_HEIGHT, DRAW_FILLED);
 }
 
 
 // 功能：按目标字框高度在指定中心绘制空心字符串
 void draw_scaled_string(glyph_point_data* glyph_array, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
-	draw_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, target_height, DRAW_OUTLINE);
+	draw_array_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, target_height, DRAW_OUTLINE);
 }
 
 
 // 功能：按目标字框高度在指定中心绘制实心字符串
 void draw_scaled_filled_string(glyph_point_data* glyph_array, font_box box, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
-	draw_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, target_height, DRAW_FILLED);
+	draw_array_string_by_height(glyph_array, UNICODE_BMP_NUMBER, box, string, encoding, bmp, center_x, center_y, target_height, DRAW_FILLED);
 }
 
 
@@ -840,7 +911,7 @@ void draw_font_scaled_string(ttf_font_data* font, const char* string, word_encod
 		return;
 	}
 
-	draw_string_by_height(font->glyph_array, font->glyph_count, font->box, string, encoding,
+	draw_array_string_by_height(font->glyph_array, font->glyph_count, font->box, string, encoding,
 		bmp, center_x, center_y, target_height, DRAW_OUTLINE);
 }
 
@@ -853,6 +924,20 @@ void draw_font_scaled_filled_string(ttf_font_data* font, const char* string, wor
 		return;
 	}
 
-	draw_string_by_height(font->glyph_array, font->glyph_count, font->box, string, encoding,
+	draw_array_string_by_height(font->glyph_array, font->glyph_count, font->box, string, encoding,
 		bmp, center_x, center_y, target_height, DRAW_FILLED);
+}
+
+
+// 功能：通过统一字形来源按目标字框高度绘制空心字符串
+void draw_source_scaled_string(font_glyph_source* source, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
+{
+	draw_string_by_height(source, string, encoding, bmp, center_x, center_y, target_height, DRAW_OUTLINE);
+}
+
+
+// 功能：通过统一字形来源按目标字框高度绘制实心字符串
+void draw_source_scaled_filled_string(font_glyph_source* source, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
+{
+	draw_string_by_height(source, string, encoding, bmp, center_x, center_y, target_height, DRAW_FILLED);
 }

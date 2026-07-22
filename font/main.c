@@ -1,4 +1,5 @@
 #include"ttf.h"
+#include"ttf_preload.h"
 #include"font_draw.h"
 #include"bmp.h"
 
@@ -11,7 +12,9 @@ int main(int argc, char* argv[])
 	char 	file[] 		= "simhei.ttf";
 	char	bmp_name[]	= "out.bmp";
 	unicode_range		range_array[5];
-	ttf_font_data		font;
+	ttf_font*		ttf;
+	ttf_preload		preload;
+	font_glyph_source	source;
 	u8			color[3];
 	bmp_data		bmp;
 	int 		center_x;
@@ -55,18 +58,27 @@ int main(int argc, char* argv[])
 	range_array[4].begin	= 0xFF00;
 	range_array[4].end	= 0xFFEF;
 
-	// 一次性读取全部配置范围内的字形数据
-	if(load_ttf_ranges(file, range_array, 5, &font) != 0){
+	// 打开一次字体解析上下文并批量预加载全部配置范围
+	ttf = NULL;
+	if(ttf_font_open(file, &ttf) != 0 ||
+	   ttf_preload_ranges(ttf, range_array, 5, &preload) != 0){
 		printf("load font error\n");
+		ttf_font_close(ttf);
+		return -1;
+	}
+	ttf_font_close(ttf);
+	if(ttf_preload_get_source(&preload, &source) != 0){
+		printf("font source error\n");
+		ttf_preload_free(&preload);
 		return -1;
 	}
 
 	// 从指定中心点按目标字框高度绘制实心字符串
-	draw_font_scaled_filled_string(&font, argv[1], WORD_ENCODING_SYSTEM, bmp,
+	draw_source_scaled_filled_string(&source, argv[1], WORD_ENCODING_SYSTEM, bmp,
 		center_x, center_y, target_height);
 
  	bmp_generate(bmp.name, (u8*) color_data, bmp.width, bmp.height);
-	free_ttf_font_data(&font);
+	ttf_preload_free(&preload);
 
 	return 0;
 }
