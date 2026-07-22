@@ -784,7 +784,7 @@ static int read_loca_table(u8* data, u16 index_to_loca_format, u32** pp_result, 
 			u16	temp;
 			memcpy(&temp, pointer+i*sizeof(u16), sizeof(u16));
 			convert(temp, sizeof(u16)*BIT_PER_BYTE);
-			(*pp_result)[i]	= temp;
+			(*pp_result)[i]	= (u32)temp*2;
 		}
 	}else{
 		for(i=0; i<loca_length; i++){
@@ -1044,7 +1044,9 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 		}else if(bit_4 != 0){
 			(raw_point_data[n]).x 	= (raw_point_data[n-1]).x;
 		}else{
-			float delta_x		= (float)((x_data[j++]<<8)|(x_data[j++]));
+			s16 raw_delta_x	= (s16)((x_data[j]<<8)|x_data[j+1]);
+			float delta_x		= (float)raw_delta_x;
+			j += 2;
 			(raw_point_data[n]).x 	= (n==0)?(delta_x):((raw_point_data[n-1]).x+delta_x);
 		}
 
@@ -1056,7 +1058,9 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 		}else if(bit_5 != 0){
 			(raw_point_data[n]).y 	= (raw_point_data[n-1]).y;
 		}else{
-			float delta_y		= (float)((y_data[k++]<<8)|(y_data[k++]));
+			s16 raw_delta_y	= (s16)((y_data[k]<<8)|y_data[k+1]);
+			float delta_y		= (float)raw_delta_y;
+			k += 2;
 			(raw_point_data[n]).y 	= (n==0)?(delta_y):((raw_point_data[n-1]).y+delta_y);
 		}
 
