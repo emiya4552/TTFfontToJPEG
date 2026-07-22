@@ -1,120 +1,26 @@
 #include"ttf.h"
+#include"font_draw.h"
 #include"bmp.h"
 
 
 u8	color_data[2000][2000][3];
-
-
-
-/* 旧版单字测试入口，保留用于历史参考
-int main()
-{
-	int 			i;
-	wchar_t			c;
-	u32			unicode;
-
-	table*			ttf_table;
-	// head 表数据
-	head_table		head;
-	// cmap 表数据
-	u16			segment_count;
-	cmap_format4_data 	format4;
-	cmap_format12_data	format12;
-	int			get_format_condition;
-	int 			glyph_index;
-	// loca 表数据
-	u32*			loca_array;
-	u32			glyph_offset;
-	int			loca_length;
-	int			glyph_length;
-
-	// glyf 表数据
-	u8*			glyph_data;
-	point*			point_data;
-	int			point_length;
-
-	// BMP 输出参数
-	int			width;
-	int			height;
-	u8			color[3];
-	int			offset_x;
-	int 			offset_y;
-	char			file[] = "xxfang.bmp";
-
-
-	c		= L'水';
-	unicode		= (u32)c;
-	width		= 2000;
-	height		= 2000;
-	offset_x	= 1000;
-	offset_y	= 1000;
-
-	color[0]	= 0xff;
-	color[1]	= 0x88;
-	color[2]	= 0x00;
-
-	read_ttf_data("simfang.ttf", &ttf_table);
-	printf("unicode = %x\n", unicode);
-
-	// 解析 head 表
-	read_head_table(ttf_table[0].data, &head);
-	printf("%d %x\n", head.index_to_loca_format, head.magic_number);
-	// 释放 head 表原始数据
-	free(ttf_table[0].data);
-
-	// 解析 cmap 表
-	get_format_condition	= read_cmap(ttf_table[1].data, &format4, &format12, &segment_count);
-	glyph_index 		= get_glyph_index(format4, format12, segment_count, unicode, get_format_condition);
-	printf("\nget_format_condition %d   glyph_index %d\n", get_format_condition, glyph_index);
-	
-	// 解析 loca 表
-	loca_length	= read_loca_table(ttf_table[2].data, head.index_to_loca_format, &loca_array, ttf_table[2].length);
-	free(ttf_table[2].data);
-	// 计算字形偏移与长度
-	glyph_offset	= loca_array[glyph_index];
-	glyph_length	= loca_array[glyph_index+1] - loca_array[glyph_index];
-	
-	// 输出 loca 调试信息
-	printf("\n loca array\n");
-	for(i=0; i<1000; i++){
-		printf("%x  ", loca_array[i]);
-	}
-	printf("\nglyph offset = %d\n", glyph_offset);
-
-	get_glyph_data(ttf_table[3].data, glyph_offset, &glyph_data, glyph_length);
-
-	// 输出 glyf 调试信息
-	printf("\nglyph_data\n");
-	printf("glyph_length   %d\n", glyph_length);
-	for(i=0; i<glyph_length; i++){
-		printf("%x  ", glyph_data[i]);
-	}
-	
-	point_length	= glyph_to_point(glyph_data, &point_data, glyph_length);
-
-	draw_word_from_point(width, height, (u8*)color_data, color, point_data, point_length, offset_x, offset_y);
- 	bmp_generate(file, (u8*) color_data, width, height);
-	return 0;
-}*/
-
-
-
 
 // 功能：加载字体并将命令行字符串渲染为实心 BMP
 int main(int argc, char* argv[])
 {
 	char 	file[] 		= "simhei.ttf";
 	char	bmp_name[]	= "out.bmp";
-	glyph_point_data*	glyph_array;
-	font_box		box;
+	unicode_range		range_array[5];
+	ttf_font_data		font;
 	u8			color[3];
 	bmp_data		bmp;
 	int 		center_x;
 	int 		center_y;
+	int		target_height;
 
-	// 检查字符串和中心点参数
-	if(argc != 4){
-		printf("usage: %s <string> <center_x> <center_y>\n", argv[0]);
+	// 检查字符串、中心点和目标字高参数
+	if(argc != 5){
+		printf("usage: %s <string> <center_x> <center_y> <target_height>\n", argv[0]);
 		return -1;
 	}
 
@@ -131,17 +37,36 @@ int main(int argc, char* argv[])
 
 	center_x	= atoi(argv[2]);
 	center_y	= atoi(argv[3]);
+	target_height	= atoi(argv[4]);
+	if(target_height <= 0){
+		printf("target height error\n");
+		return -1;
+	}
 
+	// 配置英文、通用标点、中文标点、常用汉字和全角字符范围
+	range_array[0].begin	= 0x0020;
+	range_array[0].end	= 0x007E;
+	range_array[1].begin	= 0x2000;
+	range_array[1].end	= 0x206F;
+	range_array[2].begin	= 0x3000;
+	range_array[2].end	= 0x303F;
+	range_array[3].begin	= 0x4E00;
+	range_array[3].end	= 0x9FA4;
+	range_array[4].begin	= 0xFF00;
+	range_array[4].end	= 0xFFEF;
 
+	// 一次性读取全部配置范围内的字形数据
+	if(load_ttf_ranges(file, range_array, 5, &font) != 0){
+		printf("load font error\n");
+		return -1;
+	}
 
-
-	// 读取字模数据
-	load_ttf_BMP(file, &glyph_array, &box);
-
-	// 从指定中心点绘制实心字符串
-	draw_filled_string(glyph_array, box, argv[1], WORD_ENCODING_SYSTEM, bmp, center_x, center_y);
+	// 从指定中心点按目标字框高度绘制实心字符串
+	draw_font_scaled_filled_string(&font, argv[1], WORD_ENCODING_SYSTEM, bmp,
+		center_x, center_y, target_height);
 
  	bmp_generate(bmp.name, (u8*) color_data, bmp.width, bmp.height);
+	free_ttf_font_data(&font);
 
 	return 0;
 }

@@ -27,3 +27,10 @@ eee
 .idea/
 .DS_Store
 Thumbs.db
+
+/tests/
+
+/.agents/
+/.codex/
+
+/AGENTS.md

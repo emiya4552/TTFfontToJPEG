@@ -1,125 +1,274 @@
-# TTF 字体渲染与 JPEG 编码核心源码
+# TTF 字模数据提取
 
-这个目录最初从旧项目中按文件粒度抽离，目前已作为独立源码目录继续开发。
+本项目使用 C 语言直接读取 TTF 字体文件，在不依赖字体解析库的情况下，完成字符映射、字形定位和轮廓数据提取。
 
-整理原则：
+本文仅整理 TTF 字模数据的提取思路，重点说明如何从一个字符的 Unicode 编码得到对应的字形轮廓点。绘制、排版、缩放和图片编码将在后续继续补充。
 
-- 不修改旧项目中的任何文件。
-- 初始 7 个核心文件的来源和原始哈希保留在本文末尾，`main` 中的字体代码已在此基础上继续修改。
-- 所有新增和修改只发生在 `TTF/main`，旧目录 `TTF/ttf_3` 和 `TTF/jpg/jpeg_test` 不修改。
-- 不包含 IJG/libjpeg 源码、头文件、静态库或构建产物。
-- 不包含旧测试目录中的中间数据、可执行文件、字体文件和图片样例。
+## 解析目标
 
-## 目录结构
+TTF 文件解析的核心任务，可以概括为下面这条数据链：
 
 ```text
-main/
-├─ font/
-│  ├─ main.c       # TTF 渲染示例入口
-│  ├─ encoding.c   # UTF-8、GBK及系统编码转换
-│  ├─ encoding.h   # 字符编码类型与转换接口
-│  ├─ ttf.c        # TTF 表解析、字形映射、轮廓解析和贝塞尔绘制
-│  ├─ ttf.h        # TTF 数据结构与函数声明
-│  ├─ bmp.c        # 24 位 BMP 文件生成
-│  └─ bmp.h        # BMP 结构与函数声明
-├─ jpeg/
-│  ├─ jpg.c        # BMP 读取、JPEG 编码流程及当前命令行入口
-│  └─ jpg.h        # JPEG 数据结构、量化表、Huffman 表与函数声明
-├─ tests/
-│  ├─ test_character_input.c
-│  └─ test_orientation.c
-├─ .gitignore
-└─ README.md
+Unicode 字符
+    ↓ cmap
+Glyph Index
+    ↓ loca
+字形在 glyf 表中的偏移量和长度
+    ↓ glyf
+轮廓、标志和压缩坐标
+    ↓ 轮廓重建
+结构化字形轮廓点
 ```
 
-## 初始原文件映射
+字模提取主要读取以下四张表：
 
-| 新路径 | 原路径 | 用途 |
-| --- | --- | --- |
-| `main/font/main.c` | `TTF/ttf_3/main.c` | TTF 渲染示例入口 |
-| `main/font/ttf.c` | `TTF/ttf_3/ttf.c` | TTF 核心解析与轮廓绘制 |
-| `main/font/ttf.h` | `TTF/ttf_3/ttf.h` | TTF 类型及公开函数 |
-| `main/font/bmp.c` | `TTF/ttf_3/bmp.c` | BMP 生成 |
-| `main/font/bmp.h` | `TTF/ttf_3/bmp.h` | BMP 文件结构及声明 |
-| `main/jpeg/jpg.c` | `TTF/jpg/jpeg_test/test5/jpg.c` | BMP 读取与 JPEG 编码核心流程 |
-| `main/jpeg/jpg.h` | `TTF/jpg/jpeg_test/test5/jpg.h` | JPEG 编码数据与声明 |
-
-## 当前包含的能力
-
-### TTF → BMP
-
-- 读取 TTF/SFNT 表目录及大端字段。
-- 解析 `head`、`cmap`、`loca`、`glyf` 等关键表。
-- 支持 `cmap Format 4/12` 的 Unicode 到 Glyph ID 映射。
-- 解析简单字形轮廓、坐标增量和 on-curve/off-curve 点。
-- 进行贝塞尔曲线采样并生成 24 位 BMP。
-- 读取 `head.unitsPerEm` 与 `hhea` 垂直度量，使用字体统一排版方框定位；SimHei 的汉字方框为 256×256。
-- `center_x` 表示方框中心距画布左侧的距离，`center_y` 表示方框中心距画布底部的距离；绘制时会转换为 BMP 的行列坐标。
-- `draw_word` 接收单个字符及其编码，例如 `draw_word(glyph_array, box, "保", WORD_ENCODING_UTF8, bmp, 500, 500)`；支持 UTF-8、GBK 和系统编码，空输入、非法编码和多个字符会被拒绝。
-- `draw_string` 手动解析 `hmtx.advanceWidth`，从首字符方框中心开始横向排版，并逐字调用 `draw_word`；下一个完整方框超出 BMP 时直接截断剩余字符。
-- `draw_filled_string` 复用字形轮廓与字符串排版，通过非零环绕扫描线生成实心字形，并保留汉字内部孔洞。
-
-### BMP → JPEG
-
-- 读取 24 位 BMP 像素数据。
-- RGB 转 YCbCr、MCU/数据块组织、DCT 和量化。
-- Zig-Zag、DC 差分、AC 游程和 Huffman 编码。
-- JPEG 标记段与压缩数据写入代码。
-
-JPEG 模块保留的是旧项目中最后一版自研编码器源码，适合作为继续开发的起点；本目录没有引入 `jpeg_source` 或 `libjpeg` 中的实现。
-
-## 继续开发前需要知道
-
-- `jpeg/jpg.c` 仍含 `encode`、`encode2`、`eee` 等旧调试文件写入逻辑，后续可在建立测试后删除。
-- JPEG 编码数据缓冲区、有效字节数和入口调用方式尚需重新统一；本轮没有修复这些旧接口。
-- 上述状态与 Windows/Linux 环境无关，README 仅记录后续再开发的优先切入点。
-
-## 字体程序构建
-
-Windows：
-
-```powershell
-gcc main.c ttf.c bmp.c encoding.c -o main.exe -lm
-.\main.exe 马 1000 1000
-```
-
-Linux：
-
-```text
-gcc main.c ttf.c bmp.c encoding.c -o main -lm
-./main 马 1000 1000
-```
-
-`WORD_ENCODING_SYSTEM` 会在中文 Windows 下使用当前 ANSI 代码页，在 Linux 下使用当前 Locale。Linux 显式转换 GBK 时使用 `iconv`；部分非 glibc 环境可能需要额外链接 `-liconv`。
-
-## 没有迁入的内容
-
-以下内容不是继续开发所必需，或属于第三方/构建/测试资料，因此没有复制：
-
-- `TTF/jpg/jpeg_source/**`：IJG/libjpeg 源码及安装产物。
-- `TTF/jpg/jpeg_test/test1/**`、`test2/**`：以 libjpeg 和分阶段实验为主的旧测试代码。
-- `TTF/jpg/jpeg_test/test3/**`、`test4/**`：旧版本或过渡版本。
-- `TTF/jpg/jpeg_test/test5/test.c`、`1.h`：调试入口和临时数据，不属于最终最小编码模块。
-- `*.o`、`*.a`、旧可执行文件、Makefile：依赖旧目录布局或属于构建产物。
-- `test_*.txt`、`encode*`、`emit_time`、`eee`：阶段性调试输出。
-- `*.ttf`、`*.ttc`、`*.bmp`、`*.jpg`：初始抽离时未迁入；本地开发可自行放置，且已由 `.gitignore` 排除。
-
-## 推荐的后续整理顺序
-
-1. 保留本文的来源映射和旧目录哈希，便于追溯初始实现。
-2. 将 `font/main.c` 和 `jpeg/jpg.c` 中的命令行入口移到单独的 `examples/` 或 `tools/`。
-3. 为字体与 JPEG 模块分别设计一个小型公开接口，隐藏内部结构和临时缓冲区。
-4. 增加统一的 CMake 构建，并在 Linux 下开启编译警告。
-5. 增加少量固定样例和端到端测试，再逐步清理旧调试代码。
-
-## 旧目录原始文件 SHA-256
-
-| 原文件 | SHA-256 |
+| 表名 | 作用 |
 | --- | --- |
-| `TTF/ttf_3/ttf.c` | `E2D201D92F47716B6B4F825E2578E7A573956E11E7E201FC2B970DB24FA35070` |
-| `TTF/ttf_3/ttf.h` | `0742F9053C5C47C8F810176565C3CA890F7D365B4587605C76927D7B7A5FD061` |
-| `TTF/ttf_3/bmp.c` | `CBB9ABB5AA3354664D9F666312C28E0B5BC78D6C92261BFA48D9339D9A3C1345` |
-| `TTF/ttf_3/bmp.h` | `9F8093F78D64CD973DD7A7850479CB8F69242E6CC2F60809DDF2EBD1C2C2BA77` |
-| `TTF/ttf_3/main.c` | `946B7CEA374C23F7AAB24D8D02B54AEF144F6ACFB36473C5F4E8A199DC3043A2` |
-| `TTF/jpg/jpeg_test/test5/jpg.c` | `C3696E20A19D4650200C29F872995EE124769A21E4425879D021037DE048F6A7` |
-| `TTF/jpg/jpeg_test/test5/jpg.h` | `35E342701BB6720B87704FB790E51B46F113DB0A8B6CF4652B3AD821C3BC1D9C` |
+| `head` | 获取字体全局信息以及 `loca` 表的偏移格式 |
+| `cmap` | 将 Unicode 编码映射为 Glyph Index |
+| `loca` | 根据 Glyph Index 定位 `glyf` 中的字形数据 |
+| `glyf` | 保存字形边界、轮廓、标志和压缩坐标 |
+
+完成单个字形提取的主链路是：
+
+```text
+head → cmap → loca → glyf
+```
+
+## 1. 读取 TTF 文件头和表目录
+
+TTF 使用 SFNT 容器组织数据。文件开头是一个全局文件头，随后是一组表目录项。
+
+文件头中比较重要的字段包括：
+
+| 字段 | 作用 |
+| --- | --- |
+| `version` | SFNT 版本 |
+| `numTables` | 字体文件中包含的表数量 |
+| `searchRange` | 表目录二分查找参数 |
+| `entrySelector` | 表目录二分查找参数 |
+| `rangeShift` | 表目录二分查找参数 |
+
+每个表目录项包含：
+
+| 字段 | 作用 |
+| --- | --- |
+| `tag[4]` | 四字节表名，例如 `head`、`cmap`、`loca`、`glyf` |
+| `checkSum` | 表校验和 |
+| `offset` | 表数据相对于文件开头的偏移量 |
+| `length` | 表数据长度 |
+
+解析时先读取全部目录项，再根据四字节表名找到需要的表，通过 `offset` 和 `length` 将表数据读取到独立缓冲区。
+
+### 字节序处理
+
+TTF 中的多字节整数使用大端字节序。常见的 x86 和 x64 环境使用小端字节序，因此读取 `u16`、`s16`、`u32`、`u64` 等字段后，需要先转换字节序，再参与长度、偏移和坐标计算。
+
+四字节表名本身是字符数组，不需要进行字节序转换。
+
+## 2. 解析 `head` 表
+
+`head` 表保存字体的全局信息。本项目主要使用以下字段：
+
+| 字段 | 类型 | 作用 |
+| --- | --- | --- |
+| `magicNumber` | `u32` | 固定值 `0x5F0F3CF5`，可用于检查表格式 |
+| `unitsPerEm` | `u16` | 字体设计坐标系中一个 Em 的单位数 |
+| `xMin`、`yMin` | `s16` | 字体全局边界的左下角 |
+| `xMax`、`yMax` | `s16` | 字体全局边界的右上角 |
+| `indexToLocFormat` | `s16` | 指定 `loca` 使用短偏移还是长偏移 |
+| `glyphDataFormat` | `s16` | 当前 TrueType 字形数据格式应为 0 |
+
+`unitsPerEm` 描述的是字体内部坐标单位，并不代表最终像素大小。解析得到轮廓后，可以根据目标字号建立“字体单位到像素”的缩放关系。
+
+`indexToLocFormat` 决定下一步如何读取 `loca`：
+
+- `0`：短偏移，每项为 `u16`，实际偏移量为读取值乘以 2。
+- `1`：长偏移，每项为 `u32`，读取值就是实际偏移量。
+
+## 3. 通过 `cmap` 将 Unicode 映射为 Glyph Index
+
+`cmap` 表负责回答一个问题：某个 Unicode 字符在当前字体中对应哪个字形？
+
+`cmap` 由表头、子表目录和多个映射子表组成：
+
+```text
+cmap header
+cmap subtable records[]
+cmap subtables[]
+```
+
+每个子表目录项由 `platformID`、`encodingID` 和 `offset` 组成。`platformID` 与 `encodingID` 共同说明该子表使用的字符编码范围，`offset` 指向实际映射数据。
+
+本项目解析 `Format 4` 和 `Format 12` 两种子表。
+
+### Format 4
+
+Format 4 面向基本多文种平面，使用多个 Segment 压缩字符映射。每个 Segment 由下面四项共同描述：
+
+```text
+startCode[i]
+endCode[i]
+idDelta[i]
+idRangeOffset[i]
+```
+
+查找步骤如下：
+
+1. 找到满足 `startCode[i] <= unicode <= endCode[i]` 的 Segment。
+2. 如果没有匹配区间，则返回 Glyph Index 0，表示缺失字形。
+3. 如果 `idRangeOffset[i] == 0`，直接计算：
+
+```text
+glyphIndex = (unicode + idDelta[i]) mod 65536
+```
+
+4. 如果 `idRangeOffset[i] != 0`，则利用当前 Segment 的范围偏移，在 `glyphIndexArray` 中找到对应项。
+5. 从 `glyphIndexArray` 取出的值非 0 时，还需要结合该 Segment 的 `idDelta` 得到最终 Glyph Index。
+
+Format 4 的最后一个 `endCode` 通常为 `0xFFFF`，用于保证分段搜索能够结束。
+
+代码中将 `idRangeOffset` 数组和 `glyphIndexArray` 分别保存，因此需要显式计算目标项相对于 `glyphIndexArray` 开头的下标，而不是依赖数组在原始文件中的连续地址进行越界访问。
+
+### Format 12
+
+Format 12 使用 32 位字符编码，可以描述基本多文种平面以外的字符。它由若干连续映射组组成：
+
+```text
+startCharCode
+endCharCode
+startGlyphID
+```
+
+当 Unicode 落在某个分组内时，Glyph Index 的计算方式为：
+
+```text
+glyphIndex = startGlyphID + (unicode - startCharCode)
+```
+
+因此 Format 12 的解析重点是读取全部映射组，并找到包含目标 Unicode 的区间。
+
+## 4. 通过 `loca` 定位字形数据
+
+`loca` 本质上是字形偏移数组。`cmap` 得到的 Glyph Index 可以直接作为数组下标。
+
+一个字形需要连续两个偏移量才能确定数据范围：
+
+```text
+glyphOffset = loca[glyphIndex]
+nextOffset  = loca[glyphIndex + 1]
+glyphLength = nextOffset - glyphOffset
+```
+
+如果 `glyphLength` 为 0，说明该字形没有独立轮廓数据，例如空格可能出现这种情况。
+
+根据 `head.indexToLocFormat` 处理偏移：
+
+- 短格式读取 `u16`，并将值乘以 2。
+- 长格式读取 `u32`，直接作为真实偏移。
+
+最终的 `glyphOffset` 是相对于 `glyf` 表开头的偏移量，不是相对于整个 TTF 文件的偏移量。
+
+## 5. 从 `glyf` 读取字形
+
+`glyf` 表由多个字形数据块组成。通过 `loca` 得到偏移和长度后，即可复制目标字形的数据。
+
+每个字形首先包含一个公共头部：
+
+| 字段 | 类型 | 作用 |
+| --- | --- | --- |
+| `numberOfContours` | `s16` | 正数表示简单字形，负数表示复合字形 |
+| `xMin`、`yMin` | `s16` | 当前字形边界左下角 |
+| `xMax`、`yMax` | `s16` | 当前字形边界右上角 |
+
+当前解析流程主要处理简单字形。简单字形头部之后的数据顺序为：
+
+```text
+endPtsOfContours[]
+instructionLength
+instructions[]
+flags[]
+xCoordinates[]
+yCoordinates[]
+```
+
+### 确定轮廓和点数
+
+`endPtsOfContours` 保存每条轮廓最后一个点的下标。因此：
+
+```text
+pointCount = endPtsOfContours[numberOfContours - 1] + 1
+```
+
+`instructionLength` 给出 TrueType Hinting 指令的字节数。本项目目前跳过指令内容，继续读取后面的标志和坐标数据。
+
+### 展开 Flags
+
+每个点对应一个 Flag，Flag 决定该点是否位于曲线上，以及 x、y 坐标各占多少字节。
+
+| 位 | 名称 | 作用 |
+| --- | --- | --- |
+| 0 | On Curve | 1 表示曲上点，0 表示曲外控制点 |
+| 1 | X Short Vector | x 坐标增量使用 1 字节 |
+| 2 | Y Short Vector | y 坐标增量使用 1 字节 |
+| 3 | Repeat | 下一字节表示当前 Flag 还要重复多少次 |
+| 4 | X Is Same / Positive X Short | 与位 1 组合，表示 x 增量的符号或 x 不变 |
+| 5 | Y Is Same / Positive Y Short | 与位 2 组合，表示 y 增量的符号或 y 不变 |
+| 6-7 | Reserved | 保留位 |
+
+由于 Repeat 可以压缩连续相同的 Flag，文件中的 Flag 字节数不一定等于点数。解析坐标前必须先展开重复标志，才能确定 x 坐标流和 y 坐标流的起始位置。
+
+### 还原相对坐标
+
+TTF 保存的是相对于前一个点的坐标增量，而不是每个点的绝对坐标。解析时需要根据 Flag 判断增量的长度和符号，再逐点累加：
+
+```text
+x[i] = x[i - 1] + deltaX[i]
+y[i] = y[i - 1] + deltaY[i]
+```
+
+第一个点以坐标原点为累计起点。完成累加后，才能得到字体设计坐标系中的真实轮廓点。
+
+## 6. 重建可绘制轮廓
+
+一个字形可以包含多条闭合轮廓，例如汉字外框、内部笔画和孔洞。`endPtsOfContours` 用于划分这些轮廓，每条轮廓的最后一个点还需要与第一个点闭合。
+
+TrueType 轮廓使用直线和二次贝塞尔曲线：
+
+- 两个相邻曲上点之间绘制直线。
+- 曲上点、曲外点、曲上点组成一段二次贝塞尔曲线。
+- 两个连续曲外点之间存在一个隐式曲上点，其坐标是两个曲外点的中点。
+
+因此，在输出字模数据前，需要遍历原始点数组，在连续曲外点之间补入中点，并保留每条轮廓的结束标记。至此，压缩的 `glyf` 数据已经被还原成结构化轮廓点数组，后续绘制逻辑可以直接使用该数组。
+
+## 7. 项目中的实现对应关系
+
+| 解析阶段 | 主要函数 |
+| --- | --- |
+| 读取文件头、表目录和关键表 | `read_ttf_data` |
+| 解析字体全局信息 | `read_head_table` |
+| 选择并读取 cmap 子表 | `get_cmap_subtable_data`、`read_cmap` |
+| 解析 Format 4 | `read_cmap_format4_subtable`、`get_glyph_index_format4` |
+| 解析 Format 12 | `read_cmap_format12_subtable`、`get_glyph_index_format12` |
+| 解析 loca 偏移数组 | `read_loca_table` |
+| 提取目标字形数据 | `get_glyph_data` |
+| 解压 Flag 和坐标 | `glyph_to_point` |
+| 补充隐式轮廓点 | `process_point` |
+
+字模提取的核心源码位于：
+
+```text
+font/
+├── main.c
+├── ttf.c
+├── ttf.h
+├── encoding.c
+└── encoding.h
+```
+
+## 本次整理范围
+
+- 当前流程以 `glyf` 中的简单字形解析为主。
+- 复合字形需要继续解析组件 Glyph Index、仿射变换和组件偏移。
+- TrueType Hinting 指令目前只跳过，不执行字节码解释。
+- 本文的终点是得到字形轮廓点数组，不展开 BMP 绘制、字符串排版、字体缩放和 JPEG 编码。
