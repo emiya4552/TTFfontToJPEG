@@ -1,5 +1,6 @@
 #include"ttf_preload.h"
 
+#include<stdio.h>
 #include<stdlib.h>
 #include<string.h>
 
@@ -58,6 +59,7 @@ int ttf_preload_ranges(ttf_font* ttf, const unicode_range* range_array, int rang
 
 	if(ttf == NULL || preload == NULL ||
 	   get_range_glyph_count(range_array, range_count, &glyph_count) != 0){
+		printf("[PRELOAD][ERROR] invalid range configuration\n");
 		return -1;
 	}
 	preload->glyph_array = NULL;
@@ -65,19 +67,24 @@ int ttf_preload_ranges(ttf_font* ttf, const unicode_range* range_array, int rang
 	memset(&(preload->box), 0, sizeof(font_box));
 
 	if(ttf_font_get_box(ttf, &(preload->box)) != 0){
+		printf("[PRELOAD][ERROR] font box unavailable\n");
 		return -1;
 	}
 	preload->glyph_array = (glyph_point_data*)calloc((size_t)glyph_count, sizeof(glyph_point_data));
 	if(preload->glyph_array == NULL){
+		printf("[PRELOAD][ERROR] glyph array allocation failed: glyphs=%d\n", glyph_count);
 		return -1;
 	}
 	preload->glyph_count = glyph_count;
+	printf("[PRELOAD][INFO] loading: ranges=%d glyphs=%d\n", range_count, glyph_count);
 
 	// 按范围顺序加载每个 Unicode，空轮廓仍保留水平前进宽度
 	glyph_position = 0;
 	for(i=0; i<range_count; i++){
 		for(unicode=range_array[i].begin; ; unicode++){
 			if(ttf_font_load_glyph(ttf, unicode, &(preload->glyph_array[glyph_position])) != 0){
+				printf("[PRELOAD][ERROR] glyph load failed: unicode=U+%04X\n",
+					(unsigned int)unicode);
 				ttf_preload_free(preload);
 				return -1;
 			}
@@ -87,6 +94,9 @@ int ttf_preload_ranges(ttf_font* ttf, const unicode_range* range_array, int rang
 			}
 		}
 	}
+	printf("[PRELOAD][INFO] loaded: glyphs=%d box=(%d,%d,%d,%d)\n",
+		preload->glyph_count, preload->box.x_min, preload->box.y_min,
+		preload->box.x_max, preload->box.y_max);
 
 	return 0;
 }

@@ -34,6 +34,14 @@
 
 #define BIT_PER_BYTE 		8
 
+// glyf 简单字形点标志
+#define GLYF_FLAG_ON_CURVE	0x01
+#define GLYF_FLAG_X_SHORT	0x02
+#define GLYF_FLAG_Y_SHORT	0x04
+#define GLYF_FLAG_REPEAT	0x08
+#define GLYF_FLAG_X_SAME	0x10
+#define GLYF_FLAG_Y_SAME	0x20
+
 
 #pragma pack(1)
 // TTF 表目录项
@@ -234,7 +242,7 @@ static int read_ttf_data(const char* file, FILE** pp_file, table** pp_table)
 	// 打开字体文件并读取表目录头
 	fp = fopen(file, "rb");
 	if(fp == NULL){
-		printf("open file error\n");
+		printf("[TTF][ERROR] open font failed: file=%s\n", file);
 		return -1;
 	}
 	if(fread(&ttf_header, sizeof(file_header), 1, fp) != 1){
@@ -831,6 +839,10 @@ static int process_point(point* raw_point_data, point** pp_point_data, int raw_p
 	int	i;
 	int 	j;
 
+	if(raw_point_data == NULL || pp_point_data == NULL || raw_point_length <= 0){
+		return 0;
+	}
+	*pp_point_data = NULL;
 	point_length	= 1;
 	i		= 0;
 	j		= 0;
@@ -845,6 +857,9 @@ static int process_point(point* raw_point_data, point** pp_point_data, int raw_p
 
 	// 为处理后的轮廓点申请空间
 	*pp_point_data	= (point*)malloc(sizeof(point)*point_length);
+	if(*pp_point_data == NULL){
+		return 0;
+	}
 
 	// 保持轮廓顺序并插入隐式中点
 	(*pp_point_data)[j].x		= raw_point_data[0].x;
@@ -870,222 +885,217 @@ static int process_point(point* raw_point_data, point** pp_point_data, int raw_p
 // 功能：将简单字形原始数据解析为轮廓点数组
 int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 {
-
-	int	bit_0;
-	int	bit_1;
-	int	bit_2;
-	int	bit_3;
-	int	bit_4;
-	int	bit_5;
-
+	int	contour_position;
 	int	i;
 	int	j;
-	int	k;
-	int	m;
-	int	n;
+	int	point_length;
+	int	raw_point_length;
+	int	result;
+	s16	raw_delta;
+	u16	instruction_length;
+	u16*	end_pointer_of_contours;
+	u8	current_flag;
+	u8	repeat_count;
+	u8*	flag;
+	u8*	glyph_end;
 	u8*	pointer;
-	u8*	pointer_x;
-	u8*	pointer_y;
-	int	repeat_time;
-
+	float	current_x;
+	float	current_y;
+	point*	raw_point_data;
 	glyph_data_header	header;
-	s16*			end_pointer_of_contours;
-	u16			instruction_length;
-	u8*			instructions;
-	int			flag_length;
-	int			point_length;
-	u8*			flag;
-	int			x_length;
-	int			y_length;
-	u8*			x_data;
-	u8*			y_data;
+	const char*	error_reason;
 
-	point*			raw_point_data;
-	int			raw_point_length;
+	if(pp_point_data == NULL){
+		return 0;
+	}
+	*pp_point_data = NULL;
+	if(glyph_data == NULL || glyph_length < (int)sizeof(glyph_data_header)){
+		return 0;
+	}
 
-	i		= 0;
-	pointer 	= glyph_data;
-	point_length	= 0;		
-
-	repeat_time	= 0;
+	end_pointer_of_contours	= NULL;
+	flag			= NULL;
+	raw_point_data		= NULL;
+	point_length		= 0;
+	result			= 0;
+	error_reason		= NULL;
+	pointer			= glyph_data;
+	glyph_end		= glyph_data+glyph_length;
 
 	// 读取并转换简单字形头部
 	memcpy(&header, pointer, sizeof(header));
-	// 转换字形头部中的大端字段
-	convert(header.number_of_contours, 	sizeof(s16) * BIT_PER_BYTE);
-	convert(header.x_min, 			sizeof(s16) * BIT_PER_BYTE);
-	convert(header.y_min, 			sizeof(s16) * BIT_PER_BYTE);
-	convert(header.x_max, 			sizeof(s16) * BIT_PER_BYTE);
-	convert(header.y_max, 			sizeof(s16) * BIT_PER_BYTE);
-	// 移动到轮廓结束点数组
 	pointer += sizeof(header);
+	convert(header.number_of_contours, sizeof(s16)*BIT_PER_BYTE);
+	convert(header.x_min, sizeof(s16)*BIT_PER_BYTE);
+	convert(header.y_min, sizeof(s16)*BIT_PER_BYTE);
+	convert(header.x_max, sizeof(s16)*BIT_PER_BYTE);
+	convert(header.y_max, sizeof(s16)*BIT_PER_BYTE);
 
-	// 为各轮廓结束点索引申请空间
-	end_pointer_of_contours	= (s16*)malloc(sizeof(s16)*header.number_of_contours);
-	// 读取并转换各轮廓结束点索引
-	memcpy(end_pointer_of_contours, pointer, sizeof(s16)*header.number_of_contours);
-	pointer += sizeof(s16)*header.number_of_contours;
-	for(i=0; i<header.number_of_contours; i++){
-		convert(end_pointer_of_contours[i], sizeof(s16) * BIT_PER_BYTE);
+	// 负轮廓数表示复合字形，当前函数只负责简单字形
+	if(header.number_of_contours <= 0){
+		return 0;
 	}
 
+	// 读取每个轮廓的最后一个逻辑点索引
+	if(glyph_end-pointer < (int)(sizeof(u16)*header.number_of_contours)){
+		error_reason = "contour endpoints are incomplete";
+		goto cleanup;
+	}
+	end_pointer_of_contours = (u16*)malloc(sizeof(u16)*header.number_of_contours);
+	if(end_pointer_of_contours == NULL){
+		error_reason = "cannot allocate contour endpoints";
+		goto cleanup;
+	}
+	for(i=0; i<header.number_of_contours; i++){
+		memcpy(&end_pointer_of_contours[i], pointer, sizeof(u16));
+		pointer += sizeof(u16);
+		convert(end_pointer_of_contours[i], sizeof(u16)*BIT_PER_BYTE);
+		if(i>0 && end_pointer_of_contours[i] <= end_pointer_of_contours[i-1]){
+			error_reason = "contour endpoints are not increasing";
+			goto cleanup;
+		}
+	}
+	raw_point_length = end_pointer_of_contours[header.number_of_contours-1]+1;
 
-	// 读取并转换提示指令长度
+	// 跳过提示指令，指针随后指向压缩 flag 数据
+	if(glyph_end-pointer < (int)sizeof(u16)){
+		error_reason = "instruction length is missing";
+		goto cleanup;
+	}
 	memcpy(&instruction_length, pointer, sizeof(u16));
 	pointer += sizeof(u16);
-	convert(instruction_length, sizeof(u16) * BIT_PER_BYTE);
-	// 保存提示指令并移动到点标志数据
-	if(instruction_length>0){
-		instructions = (u8*)malloc(sizeof(u8)*instruction_length);
-		memcpy(instructions, pointer, sizeof(u8)*instruction_length);
-		pointer += sizeof(u8)*instruction_length;
+	convert(instruction_length, sizeof(u16)*BIT_PER_BYTE);
+	if(glyph_end-pointer < instruction_length){
+		error_reason = "instructions are incomplete";
+		goto cleanup;
+	}
+	pointer += instruction_length;
+
+	// 将重复压缩的 flag 展开为与逻辑点数量相同的数组
+	flag = (u8*)malloc(sizeof(u8)*raw_point_length);
+	if(flag == NULL){
+		error_reason = "cannot allocate flags";
+		goto cleanup;
+	}
+	for(i=0; i<raw_point_length;){
+		if(pointer >= glyph_end){
+			error_reason = "flags are incomplete";
+			goto cleanup;
+		}
+		current_flag = *pointer;
+		pointer++;
+		flag[i] = current_flag;
+		i++;
+
+		// repeatCount 表示当前 flag 还需额外重复的逻辑点数量
+		if((current_flag&GLYF_FLAG_REPEAT) != 0){
+			if(pointer >= glyph_end){
+				error_reason = "flag repeat count is missing";
+				goto cleanup;
+			}
+			repeat_count = *pointer;
+			pointer++;
+			if(repeat_count > raw_point_length-i){
+				error_reason = "flag repeat count exceeds point count";
+				goto cleanup;
+			}
+			for(j=0; j<repeat_count; j++){
+				flag[i] = current_flag;
+				i++;
+			}
+		}
 	}
 
-	// 初始化标志流和坐标流位置
-	flag_length	= end_pointer_of_contours[header.number_of_contours-1] + 1;
-	pointer_x 	= pointer + flag_length*sizeof(u8);
-
-	// 为压缩标志数据申请空间
-	flag		= (u8*)malloc(sizeof(u8)*flag_length);
-	// 复制字形点标志数据
-	memcpy(flag, pointer, sizeof(u8)*flag_length);
-
-
-	// 展开重复标志并计算原始点数量与 y 坐标位置
-	pointer	= pointer_x;
-	for(i=0; i<flag_length;){
-		// 根据重复标志累计实际点数量
-		if(repeat_time == 0){
-			bit_3	= flag[i]&0x08;
-			bit_1	= flag[i]&0x02;
-			bit_4	= flag[i]&0x10;
-			if(bit_3 == 0){
-				point_length++;
+	// 为所有原始逻辑点申请空间，并按 flag 解码 x 坐标增量
+	raw_point_data = (point*)malloc(sizeof(point)*raw_point_length);
+	if(raw_point_data == NULL){
+		error_reason = "cannot allocate glyph points";
+		goto cleanup;
+	}
+	current_x = 0;
+	for(i=0; i<raw_point_length; i++){
+		if((flag[i]&GLYF_FLAG_X_SHORT) != 0){
+			if(pointer >= glyph_end){
+				error_reason = "x coordinates are incomplete";
+				goto cleanup;
+			}
+			if((flag[i]&GLYF_FLAG_X_SAME) != 0){
+				current_x += *pointer;
 			}else{
-				point_length += (flag[i+1] + 1);
-				repeat_time = flag[i+1];
+				current_x -= *pointer;
 			}
-		}
-		// 根据 x 坐标标志累计 x 数据长度
-		if(bit_1 != 0){
-			pointer += sizeof(u8);
-
-		}else if(bit_1==0 && bit_4 == 0){
-			pointer += sizeof(u8)*2;
-		}
-		// 处理重复标志剩余次数并移动标志索引
-		if(repeat_time > 0){
-			repeat_time--;
-			if(repeat_time == 0){
-				i += 2;
+			pointer++;
+		}else if((flag[i]&GLYF_FLAG_X_SAME) == 0){
+			if(glyph_end-pointer < (int)sizeof(s16)){
+				error_reason = "x coordinates are incomplete";
+				goto cleanup;
 			}
-		}else{
-			i++;
+			raw_delta = (s16)(((u16)pointer[0]<<8)|pointer[1]);
+			current_x += raw_delta;
+			pointer += sizeof(s16);
 		}
+		raw_point_data[i].x = current_x;
 	}
-	pointer_y = pointer;
 
-
-	// 根据总数据长度计算 x、y 坐标数据长度
-	x_length	= pointer_y - pointer_x;
-	y_length	= &(glyph_data[glyph_length-1]) - pointer_y + 1;
-
-	// 为 x、y 坐标压缩数据申请空间
-	x_data	= (u8*)malloc(sizeof(u8)*x_length);
-	y_data 	= (u8*)malloc(sizeof(u8)*y_length);
-	// 分别复制 x、y 坐标压缩数据
-	memcpy(x_data, pointer_x, x_length);
-	memcpy(y_data, pointer_y, y_length);
-
-
-	// 为展开后的原始轮廓点申请空间
-	raw_point_length	= point_length;
-	raw_point_data		= (point*)malloc(sizeof(point)*raw_point_length);
-
-	// 逐点展开标志、坐标增量和轮廓结束标记
-	j	= 0;	// x 坐标索引
-	k	= 0;	// y 坐标索引
-	m	= 0;	// 轮廓结束点索引
-	n	= 0;	// 当前点索引
-	for(i=0; i<flag_length; n++){
-		// 拆分当前点标志位
-		if(repeat_time == 0){
-			bit_0	= flag[i]&0x01;
-			bit_1	= flag[i]&0x02;
-			bit_2	= flag[i]&0x04;
-			bit_3	= flag[i]&0x08;
-			bit_4	= flag[i]&0x10;
-			bit_5	= flag[i]&0x20;
-			if(bit_3 == 0){
-				point_length++;
+	// x 坐标流结束后紧接 y 坐标流，继续按逻辑点逐项解码
+	current_y = 0;
+	contour_position = 0;
+	for(i=0; i<raw_point_length; i++){
+		if((flag[i]&GLYF_FLAG_Y_SHORT) != 0){
+			if(pointer >= glyph_end){
+				error_reason = "y coordinates are incomplete";
+				goto cleanup;
+			}
+			if((flag[i]&GLYF_FLAG_Y_SAME) != 0){
+				current_y += *pointer;
 			}else{
-				printf("repeat\n");
-				point_length += (flag[i+1] + 1);
-				repeat_time = flag[i+1];
+				current_y -= *pointer;
 			}
-		}
-
-		// 记录在线点、离线控制点和轮廓结束点
-		if(bit_0 == 0){
-			(raw_point_data[n]).locate = 0;
-		}else{
-			(raw_point_data[n]).locate = 1;
-		}
-		if(i == end_pointer_of_contours[m]){
- 			(raw_point_data[n]).locate = NEXT;
-			m++;
-		}
-
-		// 根据标志位解码并累计 x 坐标增量
-		if(bit_1 != 0){
-			float delta_x		= (float)((bit_4==0)?(-x_data[j]):(x_data[j]));
-			(raw_point_data[n]).x 	= (n==0)?(delta_x):((raw_point_data[n-1]).x+delta_x);
-			j++;
-		}else if(bit_4 != 0){
-			(raw_point_data[n]).x 	= (raw_point_data[n-1]).x;
-		}else{
-			s16 raw_delta_x	= (s16)((x_data[j]<<8)|x_data[j+1]);
-			float delta_x		= (float)raw_delta_x;
-			j += 2;
-			(raw_point_data[n]).x 	= (n==0)?(delta_x):((raw_point_data[n-1]).x+delta_x);
-		}
-
-		// 根据标志位解码并累计 y 坐标增量
-		if(bit_2 != 0){
-			float delta_y		= (float)((bit_5==0)?(-y_data[k]):(y_data[k]));
-			(raw_point_data[n]).y 	= (n==0)?(delta_y):((raw_point_data[n-1]).y+delta_y);
-			k++;
-		}else if(bit_5 != 0){
-			(raw_point_data[n]).y 	= (raw_point_data[n-1]).y;
-		}else{
-			s16 raw_delta_y	= (s16)((y_data[k]<<8)|y_data[k+1]);
-			float delta_y		= (float)raw_delta_y;
-			k += 2;
-			(raw_point_data[n]).y 	= (n==0)?(delta_y):((raw_point_data[n-1]).y+delta_y);
-		}
-
-		// 处理重复标志剩余次数并移动标志索引
-		if(repeat_time > 0){
-			repeat_time--;
-			if(repeat_time == 0){
-				i += 2;
+			pointer++;
+		}else if((flag[i]&GLYF_FLAG_Y_SAME) == 0){
+			if(glyph_end-pointer < (int)sizeof(s16)){
+				error_reason = "y coordinates are incomplete";
+				goto cleanup;
 			}
-		}else{
-			i++;
+			raw_delta = (s16)(((u16)pointer[0]<<8)|pointer[1]);
+			current_y += raw_delta;
+			pointer += sizeof(s16);
+		}
+		raw_point_data[i].y = current_y;
+		raw_point_data[i].locate = ((flag[i]&GLYF_FLAG_ON_CURVE) != 0)?1:0;
+
+		// 轮廓终点使用展开后的逻辑点索引进行比较
+		if(contour_position<header.number_of_contours &&
+		   i == end_pointer_of_contours[contour_position]){
+			raw_point_data[i].locate = NEXT;
+			contour_position++;
 		}
 	}
-
-
+	if(contour_position != header.number_of_contours){
+		error_reason = "contour endpoint was not reached";
+		goto cleanup;
+	}
 
 	point_length = process_point(raw_point_data, pp_point_data, raw_point_length);
-	// 释放解析过程中的临时数组
+	if(point_length <= 0){
+		error_reason = "cannot process glyph points";
+		goto cleanup;
+	}
+	result = point_length;
+
+cleanup:
+	if(error_reason != NULL){
+		printf("[TTF][ERROR] malformed simple glyph: %s length=%d offset=%d\n",
+			error_reason, glyph_length, (int)(pointer-glyph_data));
+		free(*pp_point_data);
+		*pp_point_data = NULL;
+		result = 0;
+	}
 	free(end_pointer_of_contours);
 	free(flag);
-	free(x_data);
-	free(y_data);
 	free(raw_point_data);
-	
-	return point_length;
+
+	return result;
 }
 
 
@@ -1124,8 +1134,10 @@ int ttf_font_open(const char* file, ttf_font** pp_font)
 	u16		cmap_format;
 
 	if(file == NULL || pp_font == NULL){
+		printf("[TTF][ERROR] invalid open arguments\n");
 		return -1;
 	}
+	printf("[TTF][INFO] opening: file=%s\n", file);
 	*pp_font = NULL;
 	font = (ttf_font*)calloc(1, sizeof(ttf_font));
 	if(font == NULL){
@@ -1144,6 +1156,8 @@ int ttf_font_open(const char* file, ttf_font** pp_font)
 		head.index_to_loca_format, &(font->loca_array), font->table_array[2].length);
 	if((cmap_format != 12 && cmap_format != 4) ||
 	   font->loca_length <= 1 || font->loca_array == NULL){
+		printf("[TTF][ERROR] required table parse failed: cmap=%u loca_entries=%d\n",
+			cmap_format, font->loca_length);
 		ttf_font_close(font);
 		return -1;
 	}
@@ -1164,6 +1178,10 @@ int ttf_font_open(const char* file, ttf_font** pp_font)
 	font->table_array[2].data = NULL;
 	font->table_array[4].data = NULL;
 	*pp_font = font;
+	printf("[TTF][INFO] opened: cmap=%u glyphs=%d units_per_em=%u box=(%d,%d,%d,%d) hmetrics=%u\n",
+		cmap_format, font->loca_length-1, head.unit_per_Em,
+		font->box.x_min, font->box.y_min, font->box.x_max, font->box.y_max,
+		font->number_of_h_metrics);
 
 	return 0;
 }

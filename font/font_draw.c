@@ -159,21 +159,22 @@ void draw_word_from_point(int width, int height, u8* color_data, u8 color[3], po
 	point*	draw_point;
 	int	first;
 
-	// 初始化首个轮廓结束位置
-	end	= 1;
+	if(color_data == NULL || color == NULL || point_data == NULL || point_length <= 0){
+		return;
+	}
 
-	printf("hellop\n");
+	// 从首个点开始逐个查找闭合轮廓
+	start	= 0;
+
 	// 为直线或二次贝塞尔控制点申请空间
 	draw_point = (point*)malloc(sizeof(point)*3);
-	printf("hellop\n");
+	if(draw_point == NULL){
+		printf("[DRAW][ERROR] cannot allocate contour buffer\n");
+		return;
+	}
 
-	while(1){
-		// 根据上一个轮廓确定当前轮廓起点
-		if(end	== 1){
-			start	= 0;
-		}else{
-			start	= end+1;
-		}
+	while(start < point_length){
+		end = -1;
 		// 查找当前轮廓的结束标记
 		for(i=start; i<point_length; i++){
 			if(point_data[i].locate == NEXT){
@@ -181,8 +182,10 @@ void draw_word_from_point(int width, int height, u8* color_data, u8 color[3], po
 				break;
 			}
 		}
-		// 所有轮廓处理完成后退出
-		if(start >= point_length){
+		// 数据损坏时停止绘制，避免继续使用上一个轮廓终点
+		if(end < 0){
+			printf("[DRAW][ERROR] contour end not found: start=%d points=%d\n",
+				start, point_length);
 			break;
 		}
 
@@ -215,8 +218,9 @@ void draw_word_from_point(int width, int height, u8* color_data, u8 color[3], po
 			draw_point[2]	= point_data[i+2];
 			draw_bezier_to_bitmap(width, height, color_data, color, draw_point, 3, offset_x, offset_y);
 
-			i += 2;
+				i += 2;
 		}
+		start = end+1;
 	}
 
 	// 释放轮廓分段绘制使用的控制点缓冲区
@@ -512,7 +516,8 @@ void draw_filled_word_from_point(int width, int height, u8* color_data, u8 color
 	// 先复用旧函数绘制轮廓，再填充轮廓内部
 	draw_word_from_point(width, height, color_data, color, point_data, point_length, offset_x, offset_y);
 	if(fill_word_from_point(width, height, color_data, color, point_data, point_length, offset_x, offset_y) != 0){
-		printf("fill word error\n");
+		printf("[DRAW][ERROR] fill failed: points=%d offset=(%d,%d)\n",
+			point_length, offset_x, offset_y);
 	}
 }
 
@@ -544,7 +549,8 @@ static int get_scaled_box(font_box box, int target_height, font_box* scaled_box,
 
 	font_height = box.y_max-box.y_min;
 	if(target_height <= 0 || font_height <= 0){
-		printf("target height error\n");
+		printf("[DRAW][ERROR] invalid scale: target_height=%d font_height=%d\n",
+			target_height, font_height);
 		return -1;
 	}
 
@@ -579,7 +585,6 @@ static void draw_glyph_by_height(glyph_point_data* glyph, font_box box, bmp_data
 	int		point_length;
 	int		offset_x;
 	int		offset_y;
-	int		i;
 
 	if(glyph == NULL || glyph->glyph_length <= 0){
 		return;
@@ -592,7 +597,8 @@ static void draw_glyph_by_height(glyph_point_data* glyph, font_box box, bmp_data
 	point_data = NULL;
 	point_length = glyph_to_point(glyph->glyph_data, &point_data, glyph->glyph_length);
 	if(point_length <= 0 || point_data == NULL){
-		printf("glyph point error\n");
+		printf("[DRAW][ERROR] glyph decode failed: unicode=U+%04X glyph_length=%d\n",
+			(unsigned int)glyph->unicode, glyph->glyph_length);
 		free(point_data);
 		return;
 	}
@@ -602,9 +608,6 @@ static void draw_glyph_by_height(glyph_point_data* glyph, font_box box, bmp_data
 
 	// 根据调用类型绘制空心或实心字形
 	if(filled == 0){
-		for(i=0; i<point_length; i++){
-			printf("i %d   x %f    y %f    locate %d\n", i, point_data[i].x, point_data[i].y, point_data[i].locate);
-		}
 		draw_word_from_point(bmp.width, bmp.height, bmp.color_data, bmp.color,
 			point_data, point_length, offset_x, offset_y);
 	}else{
@@ -623,17 +626,17 @@ static void draw_word_by_height(font_glyph_source* source, const char* word, wor
 	unicode_t	unicode;
 
 	if(source == NULL || source->get_glyph == NULL){
-		printf("font source error\n");
+		printf("[DRAW][ERROR] invalid glyph source\n");
 		return;
 	}
 	if(word_to_unicode(word, encoding, &unicode) != 0){
-		printf("word error\n");
+		printf("[DRAW][ERROR] character decode failed: encoding=%d\n", encoding);
 		return;
 	}
 
 	glyph = source->get_glyph(source->context, unicode);
 	if(glyph == NULL){
-		printf("not find correct glyph_data\n");
+		printf("[DRAW][ERROR] glyph not found: unicode=U+%04X\n", (unsigned int)unicode);
 		return;
 	}
 
@@ -713,7 +716,7 @@ static int get_centered_string_range(font_glyph_source* source, const char* stri
 	current		= string;
 	word		= (char*)malloc(string_length+1);
 	if(word == NULL){
-		printf("string malloc error\n");
+		printf("[DRAW][ERROR] string buffer allocation failed: bytes=%d\n", string_length);
 		return -1;
 	}
 
@@ -721,30 +724,35 @@ static int get_centered_string_range(font_glyph_source* source, const char* stri
 	while(current[0] != '\0'){
 		word_length = get_character_byte_length(current, encoding);
 		if(word_length < 0){
-			printf("string error\n");
+			printf("[DRAW][ERROR] invalid character boundary: byte=%d encoding=%d\n",
+				(int)(current-string), encoding);
 			break;
 		}
 
 		memcpy(word, current, word_length);
 		word[word_length] = '\0';
 		if(word_to_unicode(word, encoding, &unicode) != 0){
-			printf("word error\n");
+			printf("[DRAW][ERROR] character decode failed: byte=%d encoding=%d\n",
+				(int)(current-string), encoding);
 			break;
 		}
 
 		// 通过统一来源获取当前字符的水平前进宽度
 		glyph = source->get_glyph(source->context, unicode);
 		if(glyph == NULL){
-			printf("not find correct glyph_data\n");
+			printf("[DRAW][ERROR] glyph not found: unicode=U+%04X\n", (unsigned int)unicode);
 			break;
 		}
 
 		advance_width = scale_coordinate(glyph->advance_width, scale);
 		if(advance_width <= 0){
-			printf("advance width error\n");
+			printf("[DRAW][ERROR] invalid advance width: unicode=U+%04X width=%d\n",
+				(unsigned int)unicode, advance_width);
 			break;
 		}
 		if(*draw_width+advance_width > available_width){
+			printf("[DRAW][INFO] string prefix truncated: byte=%d required_width=%d available_width=%d\n",
+				(int)(current-string), *draw_width+advance_width, available_width);
 			break;
 		}
 
@@ -778,11 +786,11 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 	int		offset_y;
 
 	if(source == NULL || source->get_glyph == NULL){
-		printf("font source error\n");
+		printf("[DRAW][ERROR] invalid glyph source\n");
 		return;
 	}
 	if(string == NULL || string[0] == '\0'){
-		printf("string error\n");
+		printf("[DRAW][ERROR] empty string\n");
 		return;
 	}
 	if(get_scaled_box(source->box, target_height, &scaled_box, &scale) != 0){
@@ -793,8 +801,11 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 	string_length	= strlen(string);
 	if(get_centered_string_range(source, string, encoding, bmp.width, center_x, scale, &draw_length, &draw_width) != 0 ||
 	   draw_length == 0){
+		printf("[DRAW][ERROR] no drawable string prefix\n");
 		return;
 	}
+	printf("[DRAW][INFO] layout: input_bytes=%d draw_bytes=%d width=%d center=(%d,%d) target_height=%d\n",
+		string_length, draw_length, draw_width, center_x, center_y, target_height);
 
 	// 为每次截取的单字符申请可复用缓冲区
 	current		= string;
@@ -803,7 +814,7 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 	pen_x		= center_x-draw_width/2;
 
 	if(word == NULL){
-		printf("string malloc error\n");
+		printf("[DRAW][ERROR] string buffer allocation failed: bytes=%d\n", string_length);
 		return;
 	}
 
@@ -811,7 +822,8 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 	while(current < string+draw_length){
 		word_length = get_character_byte_length(current, encoding);
 		if(word_length < 0){
-			printf("string error\n");
+			printf("[DRAW][ERROR] invalid character boundary: byte=%d encoding=%d\n",
+				(int)(current-string), encoding);
 			break;
 		}
 
@@ -819,26 +831,31 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 		memcpy(word, current, word_length);
 		word[word_length] = '\0';
 		if(word_to_unicode(word, encoding, &unicode) != 0){
-			printf("word error\n");
+			printf("[DRAW][ERROR] character decode failed: byte=%d encoding=%d\n",
+				(int)(current-string), encoding);
 			break;
 		}
 
 		// 通过统一来源获取当前字符和水平前进宽度
 		glyph = source->get_glyph(source->context, unicode);
 		if(glyph == NULL){
-			printf("not find correct glyph_data\n");
+			printf("[DRAW][ERROR] glyph not found: unicode=U+%04X\n", (unsigned int)unicode);
 			break;
 		}
 
 		advance_width = scale_coordinate(glyph->advance_width, scale);
 		if(advance_width <= 0){
-			printf("advance width error\n");
+			printf("[DRAW][ERROR] invalid advance width: unicode=U+%04X width=%d\n",
+				(unsigned int)unicode, advance_width);
 			break;
 		}
 
 		// 当前完整排版框越界时截断剩余字符串
 		if(pen_x < 0 || pen_x+advance_width > bmp.width ||
 		   offset_y+scaled_box.y_min < 0 || offset_y+scaled_box.y_max > bmp.height){
+			printf("[DRAW][INFO] drawing stopped at byte=%d: pen_x=%d advance=%d vertical=(%d,%d)\n",
+				(int)(current-string), pen_x, advance_width,
+				offset_y+scaled_box.y_min, offset_y+scaled_box.y_max);
 			break;
 		}
 
@@ -855,6 +872,9 @@ static void draw_string_by_height(font_glyph_source* source, const char* string,
 		pen_x	+= advance_width;
 		current	+= word_length;
 	}
+	printf("[DRAW][INFO] rendered: bytes=%d/%d width=%d mode=%s\n",
+		(int)(current-string), string_length, pen_x-(center_x-draw_width/2),
+		(filled == 0)?("outline"):("filled"));
 
 	free(word);
 }
@@ -907,7 +927,7 @@ void draw_scaled_filled_string(glyph_point_data* glyph_array, font_box box, cons
 void draw_font_scaled_string(ttf_font_data* font, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
 	if(font == NULL || font->glyph_array == NULL || font->glyph_count <= 0){
-		printf("font data error\n");
+		printf("[DRAW][ERROR] invalid preloaded font data\n");
 		return;
 	}
 
@@ -920,7 +940,7 @@ void draw_font_scaled_string(ttf_font_data* font, const char* string, word_encod
 void draw_font_scaled_filled_string(ttf_font_data* font, const char* string, word_encoding encoding, bmp_data bmp, int center_x, int center_y, int target_height)
 {
 	if(font == NULL || font->glyph_array == NULL || font->glyph_count <= 0){
-		printf("font data error\n");
+		printf("[DRAW][ERROR] invalid preloaded font data\n");
 		return;
 	}
 

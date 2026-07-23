@@ -16,12 +16,12 @@ int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 
 	fp	= fopen(file,"wb+");
 	if(fp == NULL){
-		printf("open file error\n");
+		printf("[BMP][ERROR] open output failed: file=%s\n", file);
 		return -1;
 	}
 
 	if(width <= 0){
-		printf("width error\n");
+		printf("[BMP][ERROR] invalid width: width=%d\n", width);
 		return -2;
 	}
 
@@ -98,6 +98,8 @@ int bmp_generate(char* file, unsigned char* color_data, int width, int height)
 	fwrite(bmp_data, 1, image_size, fp);
 
 	fclose(fp);
+	printf("[BMP][INFO] generated: file=%s width=%d height=%d bytes=%d\n",
+		file, width, height, image_size);
 
 	return 0;
 }

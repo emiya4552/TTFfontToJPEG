@@ -5,6 +5,30 @@
 #include"ttf.h"
 
 
+// 默认预加载范围数量
+#define TTF_PRELOAD_DEFAULT_RANGE_COUNT		5
+
+// 基本英文与 ASCII 字符范围
+#define TTF_PRELOAD_ASCII_BEGIN			0x0020
+#define TTF_PRELOAD_ASCII_END			0x007E
+
+// 通用标点字符范围
+#define TTF_PRELOAD_GENERAL_PUNCTUATION_BEGIN	0x2000
+#define TTF_PRELOAD_GENERAL_PUNCTUATION_END	0x206F
+
+// 中文标点字符范围
+#define TTF_PRELOAD_CJK_PUNCTUATION_BEGIN	0x3000
+#define TTF_PRELOAD_CJK_PUNCTUATION_END		0x303F
+
+// 常用汉字范围
+#define TTF_PRELOAD_COMMON_CJK_BEGIN		0x4E00
+#define TTF_PRELOAD_COMMON_CJK_END		0x9FA4
+
+// 全角与半角字符范围
+#define TTF_PRELOAD_FULLWIDTH_BEGIN		0xFF00
+#define TTF_PRELOAD_FULLWIDTH_END		0xFFEF
+
+
 typedef struct{
 	u32	begin;
 	u32	end;
