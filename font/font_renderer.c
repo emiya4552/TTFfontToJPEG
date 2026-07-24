@@ -166,8 +166,8 @@ int font_renderer_open(const font_render_options* options, font_renderer** pp_re
 }
 
 
-// 功能：使用已经打开的字体渲染器将字符串输出为实心 BMP
-int font_renderer_render(font_renderer* renderer, const char* text)
+// 功能：将字符串绘制到新分配的 RGB 缓冲区，缓冲区由调用者使用 free 释放
+int font_renderer_render_rgb(font_renderer* renderer, const char* text, u8** pp_color_data)
 {
 	bmp_data	bmp;
 	u8*		color_data;
@@ -175,9 +175,13 @@ int font_renderer_render(font_renderer* renderer, const char* text)
 	size_t		color_length;
 	int		center_x;
 	int		center_y;
-	int		result;
 
-	if(renderer == NULL || text == NULL || text[0] == '\0'){
+	if(pp_color_data == NULL){
+		printf("[RENDERER][ERROR] invalid render request\n");
+		return -1;
+	}
+	*pp_color_data = NULL;
+	if(renderer==NULL || text==NULL || text[0]=='\0'){
 		printf("[RENDERER][ERROR] invalid render request\n");
 		return -1;
 	}
@@ -215,13 +219,27 @@ int font_renderer_render(font_renderer* renderer, const char* text)
 	bmp.color	= renderer->options.color;
 	bmp.width	= renderer->options.canvas_width;
 	bmp.height	= renderer->options.canvas_height;
-	printf("[RENDERER][INFO] render: text=\"%s\" center=(%d,%d) target_height=%d output=%s\n",
-		text, center_x, center_y, renderer->options.target_height,
-		renderer->options.output_file);
+	printf("[RENDERER][INFO] render: text=\"%s\" center=(%d,%d) target_height=%d\n",
+		text, center_x, center_y, renderer->options.target_height);
 
 	// 绘制层只使用统一字形来源，不感知当前采用的加载策略
 	draw_source_scaled_filled_string(&(renderer->source), text, renderer->options.encoding,
 		bmp, center_x, center_y, renderer->options.target_height);
+	*pp_color_data = color_data;
+	return 0;
+}
+
+
+// 功能：使用已经打开的字体渲染器将字符串输出为实心 BMP
+int font_renderer_render(font_renderer* renderer, const char* text)
+{
+	u8*	color_data;
+	int	result;
+
+	color_data = NULL;
+	if(font_renderer_render_rgb(renderer, text, &color_data) != 0){
+		return -1;
+	}
 	result = bmp_generate((char*)renderer->options.output_file, color_data,
 		renderer->options.canvas_width, renderer->options.canvas_height);
 	free(color_data);

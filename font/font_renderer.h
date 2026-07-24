@@ -47,6 +47,9 @@ void init_font_render_options(font_render_options* options);
 // 功能：根据配置打开可复用的高层字体渲染器
 int font_renderer_open(const font_render_options* options, font_renderer** pp_renderer);
 
+// 功能：将字符串绘制到新分配的 RGB 缓冲区，缓冲区由调用者使用 free 释放
+int font_renderer_render_rgb(font_renderer* renderer, const char* text, u8** pp_color_data);
+
 // 功能：使用已经打开的字体渲染器将字符串输出为实心 BMP
 int font_renderer_render(font_renderer* renderer, const char* text);
 

@@ -27,6 +27,8 @@
 				((B == 32) ? BIG_TO_LITTLE_32(A) : \
 				((B == 64) ? BIG_TO_LITTLE_64(A) : (A))))
 
+#define CONVERT(A)	convert((A), sizeof(A)*BIT_PER_BYTE)
+
 // cmap 表的平台编号与编码编号
 #define PLATFORM_ID_WINDOWS 		3
 #define ENCODING_ID_3_BMP 		1
@@ -176,11 +178,11 @@ static void read_hhea_header(u8* data, hhea_header* header)
 {
 	memcpy(header, data, sizeof(hhea_header));
 
-	convert(header->version,	sizeof(header->version)*BIT_PER_BYTE);
-	convert(header->ascent,		sizeof(header->ascent)*BIT_PER_BYTE);
-	convert(header->descent,	sizeof(header->descent)*BIT_PER_BYTE);
-	convert(header->line_gap,	sizeof(header->line_gap)*BIT_PER_BYTE);
-	convert(header->number_of_h_metrics, sizeof(header->number_of_h_metrics)*BIT_PER_BYTE);
+	CONVERT(header->version);
+	CONVERT(header->ascent);
+	CONVERT(header->descent);
+	CONVERT(header->line_gap);
+	CONVERT(header->number_of_h_metrics);
 }
 
 
@@ -197,7 +199,7 @@ static u16 get_advance_width(u8* hmtx_data, u16 number_of_h_metrics, int glyph_i
 	// 超出完整度量项范围的字形复用最后一个前进宽度
 	metric_index = (glyph_index < number_of_h_metrics) ? glyph_index : number_of_h_metrics-1;
 	memcpy(&advance_width, hmtx_data+metric_index*4, sizeof(u16));
-	convert(advance_width, sizeof(advance_width)*BIT_PER_BYTE);
+	CONVERT(advance_width);
 
 	return advance_width;
 }
@@ -250,11 +252,11 @@ static int read_ttf_data(const char* file, FILE** pp_file, table** pp_table)
 		return -1;
 	}
 
-	convert(ttf_header.version, 		sizeof(ttf_header.version)*BIT_PER_BYTE);
-	convert(ttf_header.table_number, 	sizeof(ttf_header.table_number)*BIT_PER_BYTE);
-	convert(ttf_header.search_range, 	sizeof(ttf_header.search_range)*BIT_PER_BYTE);
-	convert(ttf_header.entry_selector,	sizeof(ttf_header.entry_selector)*BIT_PER_BYTE);
-	convert(ttf_header.range_shift,		sizeof(ttf_header.range_shift)*BIT_PER_BYTE);
+	CONVERT(ttf_header.version);
+	CONVERT(ttf_header.table_number);
+	CONVERT(ttf_header.search_range);
+	CONVERT(ttf_header.entry_selector);
+	CONVERT(ttf_header.range_shift);
 	if(ttf_header.table_number == 0){
 		fclose(fp);
 		return -1;
@@ -269,9 +271,9 @@ static int read_ttf_data(const char* file, FILE** pp_file, table** pp_table)
 		return -1;
 	}
 	for(i=0; i<ttf_header.table_number; i++){
-		convert(table_entry_array[i].check_sum, sizeof(table_entry_array[i].check_sum)*BIT_PER_BYTE);
-		convert(table_entry_array[i].offset, sizeof(table_entry_array[i].offset)*BIT_PER_BYTE);
-		convert(table_entry_array[i].length, sizeof(table_entry_array[i].length)*BIT_PER_BYTE);
+		CONVERT(table_entry_array[i].check_sum);
+		CONVERT(table_entry_array[i].offset);
+		CONVERT(table_entry_array[i].length);
 	}
 
 	key_table_name[0] = "head";
@@ -336,23 +338,23 @@ static void read_head_table(u8* head_table_data, head_table* head_table_struct)
 	// 复制结构并将所有多字节字段转换为本机字节序
 	memcpy(head_table_struct, head_table_data, sizeof(head_table));
 
-	convert(head_table_struct->version,			sizeof(head_table_struct->version)			*BIT_PER_BYTE);
-	convert(head_table_struct->font_revision,		sizeof(head_table_struct->font_revision)		*BIT_PER_BYTE);
-	convert(head_table_struct->check_sum_adjustment,	sizeof(head_table_struct->check_sum_adjustment)		*BIT_PER_BYTE);
-	convert(head_table_struct->magic_number,		sizeof(head_table_struct->magic_number)			*BIT_PER_BYTE);
-	convert(head_table_struct->flags,			sizeof(head_table_struct->flags)			*BIT_PER_BYTE);
-	convert(head_table_struct->unit_per_Em,			sizeof(head_table_struct->unit_per_Em)			*BIT_PER_BYTE);
-	convert(head_table_struct->created,			sizeof(head_table_struct->created)			*BIT_PER_BYTE);
-	convert(head_table_struct->modified,			sizeof(head_table_struct->modified)			*BIT_PER_BYTE);
-	convert(head_table_struct->xMin,			sizeof(head_table_struct->xMin)				*BIT_PER_BYTE);
-	convert(head_table_struct->yMin,			sizeof(head_table_struct->yMin)				*BIT_PER_BYTE);
-	convert(head_table_struct->xMax,			sizeof(head_table_struct->xMax)				*BIT_PER_BYTE);
-	convert(head_table_struct->yMax,			sizeof(head_table_struct->yMax)				*BIT_PER_BYTE);
-	convert(head_table_struct->mac_style,			sizeof(head_table_struct->mac_style)			*BIT_PER_BYTE);
-	convert(head_table_struct->lowest_RecPPRM,		sizeof(head_table_struct->lowest_RecPPRM)		*BIT_PER_BYTE);
-	convert(head_table_struct->font_direction_hint,		sizeof(head_table_struct->font_direction_hint)		*BIT_PER_BYTE);
-	convert(head_table_struct->index_to_loca_format,	sizeof(head_table_struct->index_to_loca_format)		*BIT_PER_BYTE);
-	convert(head_table_struct->glyph_data_format,		sizeof(head_table_struct->glyph_data_format)		*BIT_PER_BYTE);
+	CONVERT(head_table_struct->version);
+	CONVERT(head_table_struct->font_revision);
+	CONVERT(head_table_struct->check_sum_adjustment);
+	CONVERT(head_table_struct->magic_number);
+	CONVERT(head_table_struct->flags);
+	CONVERT(head_table_struct->unit_per_Em);
+	CONVERT(head_table_struct->created);
+	CONVERT(head_table_struct->modified);
+	CONVERT(head_table_struct->xMin);
+	CONVERT(head_table_struct->yMin);
+	CONVERT(head_table_struct->xMax);
+	CONVERT(head_table_struct->yMax);
+	CONVERT(head_table_struct->mac_style);
+	CONVERT(head_table_struct->lowest_RecPPRM);
+	CONVERT(head_table_struct->font_direction_hint);
+	CONVERT(head_table_struct->index_to_loca_format);
+	CONVERT(head_table_struct->glyph_data_format);
 }
 
 
@@ -383,7 +385,7 @@ static u16 get_cmap_subtable_data(u8* cmap_table_data, u16 target_format, u8** p
 	// 跳过版本号并读取子表数量
 	pointer	+= sizeof(u16);	// 跳过版本号
 	memcpy(&number_of_subtable, pointer, sizeof(u16));
-	convert(number_of_subtable, sizeof(number_of_subtable) * BIT_PER_BYTE);
+	CONVERT(number_of_subtable);
 
 	// 为子表头申请空间并移动到首个目录项
 	pointer += sizeof(u16); // 跳过子表数量
@@ -396,9 +398,9 @@ static u16 get_cmap_subtable_data(u8* cmap_table_data, u16 target_format, u8** p
 	for(i=0; i<number_of_subtable; i++){
 		memcpy(&(header[i]), pointer, sizeof(cmap_subtable_header));
 
-		convert(header[i].platform_id, 	sizeof(header[i].platform_id)	* BIT_PER_BYTE);
-		convert(header[i].encoding_id,	sizeof(header[i].encoding_id)	* BIT_PER_BYTE);
-		convert(header[i].offset, 	sizeof(header[i].offset)	* BIT_PER_BYTE);
+		CONVERT(header[i].platform_id);
+		CONVERT(header[i].encoding_id);
+		CONVERT(header[i].offset);
 		pointer += sizeof(cmap_subtable_header);
 	}
 
@@ -407,7 +409,7 @@ static u16 get_cmap_subtable_data(u8* cmap_table_data, u16 target_format, u8** p
 	for(i=0;i<number_of_subtable;i++){
 		pointer = cmap_table_data + header[i].offset;
 		memcpy(&subtable_format, pointer, sizeof(u16));
-		convert(subtable_format, sizeof(subtable_format) * BIT_PER_BYTE);
+		CONVERT(subtable_format);
 
 		if(subtable_format != target_format){
 			continue;
@@ -432,16 +434,16 @@ static u16 get_cmap_subtable_data(u8* cmap_table_data, u16 target_format, u8** p
 	pointer	= cmap_table_data + header[current_subtable].offset;
 	// 读取子表格式和长度
 	memcpy(&subtable_format, pointer, sizeof(u16));
-	convert(subtable_format, sizeof(subtable_format) * BIT_PER_BYTE);
+	CONVERT(subtable_format);
 	pointer	+= sizeof(u16);		// 跳过格式字段
 	if(subtable_format == 4){
 		memcpy(&subtable_length_format_4, pointer, sizeof(u16));
-		convert(subtable_length_format_4, sizeof(u16) * BIT_PER_BYTE);
+		CONVERT(subtable_length_format_4);
 		subtable_length = subtable_length_format_4;
 	}else if(subtable_format == 12){
 		pointer += sizeof(u16);	// 跳过保留字段
 		memcpy(&subtable_length_format_12, pointer, sizeof(u32));
-		convert(subtable_length_format_12, sizeof(u32) * BIT_PER_BYTE);
+		CONVERT(subtable_length_format_12);
 		subtable_length = subtable_length_format_12;
 	}else{
 		free(header);
@@ -487,13 +489,13 @@ static u16 read_cmap_format4_subtable(u8* cmap_subtable_data, cmap_format4_data*
 	memcpy(&header, pointer, sizeof(cmap_format4_header));
 	pointer += sizeof(cmap_format4_header);
 
-	convert(header.format,			sizeof(header.format) 		*BIT_PER_BYTE);
-	convert(header.length, 			sizeof(header.length) 		*BIT_PER_BYTE);
-	convert(header.language,		sizeof(header.language) 	*BIT_PER_BYTE);
-	convert(header.segment_count_X2, 	sizeof(header.segment_count_X2)	*BIT_PER_BYTE);
-	convert(header.search_range, 		sizeof(header.search_range) 	*BIT_PER_BYTE);
-	convert(header.entry_selector, 		sizeof(header.entry_selector) 	*BIT_PER_BYTE);
-	convert(header.range_shift, 		sizeof(header.range_shift) 	*BIT_PER_BYTE);
+	CONVERT(header.format);
+	CONVERT(header.length);
+	CONVERT(header.language);
+	CONVERT(header.segment_count_X2);
+	CONVERT(header.search_range);
+	CONVERT(header.entry_selector);
+	CONVERT(header.range_shift);
 	
 	segment_count	= header.segment_count_X2 / 2;
 
@@ -525,32 +527,32 @@ static u16 read_cmap_format4_subtable(u8* cmap_subtable_data, cmap_format4_data*
 	// 按 Format 4 布局依次读取各分段数组
 	memcpy(p_data->end_code, pointer, sizeof(u16)*segment_count);
 	for(i=0;i<segment_count;i++){
-		convert((p_data->end_code)[i], sizeof(u16)*BIT_PER_BYTE);
+		CONVERT((p_data->end_code)[i]);
 	}
 	pointer += sizeof(u16)*(segment_count+1);	// 跳过保留字段和 end_code 数组
 	
 	memcpy(p_data->start_code, pointer, sizeof(u16)*segment_count);
 	for(i=0;i<segment_count;i++){
-		convert((p_data->start_code)[i], sizeof(u16)*BIT_PER_BYTE);
+		CONVERT((p_data->start_code)[i]);
 	}
 	pointer += sizeof(u16)*(segment_count);	// 跳过 start_code 数组
 	
 	memcpy(p_data->id_delta, pointer, sizeof(u16)*segment_count);
 	for(i=0;i<segment_count;i++){
-		convert((p_data->id_delta)[i], sizeof(u16)*BIT_PER_BYTE);
+		CONVERT((p_data->id_delta)[i]);
 	}
 	pointer += sizeof(u16)*(segment_count);	// 跳过 id_delta 数组
 
 	memcpy(p_data->id_range_offset, pointer, sizeof(u16)*segment_count);
 	for(i=0;i<segment_count;i++){
-		convert((p_data->id_range_offset)[i], sizeof(u16)*BIT_PER_BYTE);
+		CONVERT((p_data->id_range_offset)[i]);
 	}
 	pointer += sizeof(u16)*(segment_count);	// 跳过 id_range_offset 数组
 
 	if(glyph_index_array_length > 0){
 		memcpy(p_data->glyph_index_array, pointer, sizeof(u16)*glyph_index_array_length);
 		for(i=0;i<glyph_index_array_length;i++){
-			convert((p_data->glyph_index_array)[i], sizeof(u16)*BIT_PER_BYTE);
+			CONVERT((p_data->glyph_index_array)[i]);
 		}
 	}
 
@@ -630,11 +632,11 @@ static int read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_dat
 	memcpy(&(p_data->groups_number), pointer, sizeof(u32));
 	pointer += sizeof(u32);
 
-	convert(p_data->format, 	sizeof(u16)*BIT_PER_BYTE);
-	convert(p_data->reserved, 	sizeof(u16)*BIT_PER_BYTE);
-	convert(p_data->length, 	sizeof(u32)*BIT_PER_BYTE);
-	convert(p_data->language, 	sizeof(u32)*BIT_PER_BYTE);
-	convert(p_data->groups_number, 	sizeof(u32)*BIT_PER_BYTE);
+	CONVERT(p_data->format);
+	CONVERT(p_data->reserved);
+	CONVERT(p_data->length);
+	CONVERT(p_data->language);
+	CONVERT(p_data->groups_number);
 
 
 	// 为连续映射分组申请空间
@@ -649,9 +651,9 @@ static int read_cmap_format12_subtable(u8* cmap_subtable_data, cmap_format12_dat
 	// 读取并转换全部连续映射分组
 	memcpy(p_data->groups, pointer, sizeof(sequential_map_group)*(p_data->groups_number));
 	for(i=0; i<p_data->groups_number; i++){
-		convert((p_data->groups)[i].start_char_code, 	sizeof(u32)*BIT_PER_BYTE);
-		convert((p_data->groups)[i].end_char_code, 	sizeof(u32)*BIT_PER_BYTE);
-		convert((p_data->groups)[i].start_glyph_id, 	sizeof(u32)*BIT_PER_BYTE);
+		CONVERT((p_data->groups)[i].start_char_code);
+		CONVERT((p_data->groups)[i].end_char_code);
+		CONVERT((p_data->groups)[i].start_glyph_id);
 	}
 
 	return 0;
@@ -791,13 +793,13 @@ static int read_loca_table(u8* data, u16 index_to_loca_format, u32** pp_result, 
 		for(i=0; i<loca_length; i++){
 			u16	temp;
 			memcpy(&temp, pointer+i*sizeof(u16), sizeof(u16));
-			convert(temp, sizeof(u16)*BIT_PER_BYTE);
+			CONVERT(temp);
 			(*pp_result)[i]	= (u32)temp*2;
 		}
 	}else{
 		for(i=0; i<loca_length; i++){
 			memcpy(&((*pp_result)[i]), pointer+i*sizeof(u32), sizeof(u32));
-			convert((*pp_result)[i], sizeof(u32)*BIT_PER_BYTE);
+			CONVERT((*pp_result)[i]);
 		}
 	}
 	
@@ -925,11 +927,11 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 	// 读取并转换简单字形头部
 	memcpy(&header, pointer, sizeof(header));
 	pointer += sizeof(header);
-	convert(header.number_of_contours, sizeof(s16)*BIT_PER_BYTE);
-	convert(header.x_min, sizeof(s16)*BIT_PER_BYTE);
-	convert(header.y_min, sizeof(s16)*BIT_PER_BYTE);
-	convert(header.x_max, sizeof(s16)*BIT_PER_BYTE);
-	convert(header.y_max, sizeof(s16)*BIT_PER_BYTE);
+	CONVERT(header.number_of_contours);
+	CONVERT(header.x_min);
+	CONVERT(header.y_min);
+	CONVERT(header.x_max);
+	CONVERT(header.y_max);
 
 	// 负轮廓数表示复合字形，当前函数只负责简单字形
 	if(header.number_of_contours <= 0){
@@ -949,7 +951,7 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 	for(i=0; i<header.number_of_contours; i++){
 		memcpy(&end_pointer_of_contours[i], pointer, sizeof(u16));
 		pointer += sizeof(u16);
-		convert(end_pointer_of_contours[i], sizeof(u16)*BIT_PER_BYTE);
+		CONVERT(end_pointer_of_contours[i]);
 		if(i>0 && end_pointer_of_contours[i] <= end_pointer_of_contours[i-1]){
 			error_reason = "contour endpoints are not increasing";
 			goto cleanup;
@@ -964,7 +966,7 @@ int glyph_to_point(u8* glyph_data, point** pp_point_data, int glyph_length)
 	}
 	memcpy(&instruction_length, pointer, sizeof(u16));
 	pointer += sizeof(u16);
-	convert(instruction_length, sizeof(u16)*BIT_PER_BYTE);
+	CONVERT(instruction_length);
 	if(glyph_end-pointer < instruction_length){
 		error_reason = "instructions are incomplete";
 		goto cleanup;
